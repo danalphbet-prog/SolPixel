@@ -3,21 +3,37 @@ package com.solpixel.game;
 import android.app.Activity;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
+import android.media.MediaPlayer;
+import android.content.SharedPreferences;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
 public final class GameActivity extends Activity {
-    // 0 = menu, 1 = jogando, 2 = pausado
+    // 0 = menu, 1 = jogando, 2 = pausa, 3 = configuracoes
     volatile int state = 0;
     GameRenderer renderer;
     GameHud hud;
     GLSurfaceView surface;
+    private MediaPlayer ambient;
+    private SharedPreferences preferences;
+    volatile boolean musicOn=true;
+    volatile float musicVolume=.55f;
+    volatile int renderDistance=260;
+
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
+        preferences=getSharedPreferences("SolPixelSettings",MODE_PRIVATE);
+        musicOn=preferences.getBoolean("music",true);
+        musicVolume=preferences.getFloat("volume",.55f);
+        renderDistance=preferences.getInt("distance",260);
+        try {
+            ambient=MediaPlayer.create(this,R.raw.ambient_music);
+            if(ambient!=null){ambient.setLooping(true);ambient.setVolume(musicVolume,musicVolume);}
+        }catch(Exception ignored){ambient=null;}
         renderer = new GameRenderer(this);
         surface = new GLSurfaceView(this);
         surface.setEGLContextClientVersion(3);
@@ -40,25 +56,56 @@ public final class GameActivity extends Activity {
     void play() {
         renderer.reset(); state = 1;
         hud.resetControls(); hud.invalidate();
+        updateAudio();
     }
     void pause() {
         if (state == 1) { state = 2; renderer.move(0,0); hud.resetControls(); hud.invalidate(); }
     }
-    void resumeGame() { state = 1; hud.invalidate(); }
-    void mainMenu() { state = 0; renderer.move(0,0); hud.resetControls(); hud.invalidate(); }
+    void resumeGame() { state = 1; hud.invalidate();updateAudio(); }
+    void mainMenu() { state = 0; renderer.move(0,0); hud.resetControls(); hud.invalidate();updateAudio(); }
+    void openSettings(){if(state==2){state=3;hud.invalidate();}}
+    void closeSettings(){if(state==3){state=2;hud.invalidate();}}
+    void setMusicOn(boolean enabled){
+        musicOn=enabled;preferences.edit().putBoolean("music",enabled).apply();updateAudio();hud.invalidate();
+    }
+    void setMusicVolume(float value){
+        musicVolume=Math.max(0f,Math.min(1f,value));
+        preferences.edit().putFloat("volume",musicVolume).apply();updateAudio();hud.invalidate();
+    }
+    void setRenderDistance(int distance){
+        int[] options={180,260,340,420};
+        int closest=options[0];
+        for(int v:options)if(Math.abs(distance-v)<Math.abs(distance-closest))closest=v;
+        renderDistance=closest;
+        preferences.edit().putInt("distance",renderDistance).apply();hud.invalidate();
+    }
+    private void updateAudio(){
+        if(ambient==null)return;
+        try {
+            ambient.setVolume(musicVolume,musicVolume);
+            if(musicOn && state!=0){if(!ambient.isPlaying())ambient.start();}
+            else if(ambient.isPlaying())ambient.pause();
+        }catch(IllegalStateException ignored){}
+    }
     @Override protected void onPause() {
         if (state == 1) pause();
+        if(ambient!=null && ambient.isPlaying())ambient.pause();
         surface.onPause(); super.onPause();
     }
     @Override protected void onResume() {
-        super.onResume(); surface.onResume(); immersive();
+        super.onResume(); surface.onResume(); immersive();updateAudio();
     }
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) immersive();
     }
+    @Override protected void onDestroy(){
+        if(ambient!=null){ambient.release();ambient=null;}
+        super.onDestroy();
+    }
     @Override public void onBackPressed() {
         if (state == 1) pause();
+        else if (state == 3) closeSettings();
         else if (state == 2) resumeGame();
         else super.onBackPressed();
     }

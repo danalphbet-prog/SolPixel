@@ -35,6 +35,7 @@ final class Shaders {
         in float vDist;
         uniform sampler2D uGround;
         uniform vec3 uSun;
+        uniform float uDrawDistance;
         out vec4 outColor;
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
         void main(){
@@ -67,8 +68,11 @@ final class Shaders {
             vec3 color=albedo*(vec3(.37,.43,.47)+warm*light*.82);
             // Escurecimento sob o dossel sem um pesado passe de shadow mapping.
             color*=1.0-clamp(vForest,0.0,1.0)*.49;
-            float fog=clamp((vDist-50.0)/185.0,0.0,.87);
-            color=mix(color,vec3(.67,.74,.75),fog);
+            float fog=smoothstep(uDrawDistance*.34,uDrawDistance*.99,vDist)*.91;
+            color=mix(color,vec3(.70,.81,.90),fog);
+            // Paleta de 5 bits por canal + dithering ordenado: retro PS1.
+            float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
+            color=floor(clamp(color,0.0,1.0)*31.0+bayer)/31.0;
             outColor=vec4(color,1.0);
         }
         """;
@@ -91,36 +95,17 @@ final class Shaders {
         in vec2 vUv;
         uniform vec3 uForward,uRight,uUp,uSun;
         uniform float uAspect,uFov;
-        uniform sampler2D uSkybox;
-        uniform float uSkyAvailable;
         out vec4 outColor;
-        float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-        float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
-            return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),
-              mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
         void main(){
             vec2 q=(vUv*2.0-1.0)*vec2(uAspect,1.0)*uFov;
             vec3 dir=normalize(uForward+q.x*uRight+q.y*uUp);
-            float altitude=smoothstep(-.23,.8,dir.y);
-            vec3 sky=mix(vec3(.80,.75,.65),vec3(.31,.56,.75),altitude);
-            sky=mix(sky,vec3(.14,.33,.58),smoothstep(.3,1.0,dir.y)*.34);
-            float clouds= noise(dir.xz*13.0+dir.y*4.0)*.7+
-                noise(dir.xz*26.0+dir.y*9.0)*.3;
-            float cloudAmount=smoothstep(.58,.75,clouds)*smoothstep(-.04,.26,dir.y)*.37;
-            sky=mix(sky,vec3(.98,.89,.73),cloudAmount);
-            // Horizonte omnidirecional: imagem ASCII/halftone em azimute 360 graus.
-            float skyAngle=atan(dir.z,dir.x)/(6.28318530718)+0.5;
-            float panoV=clamp((dir.y+0.055)/0.52,0.0,1.0);
-            float horizonMask=smoothstep(-0.16,-0.055,dir.y)*
-                              (1.0-smoothstep(0.35,0.52,dir.y))*uSkyAvailable;
-            sky=mix(sky,texture(uSkybox,vec2(skyAngle,panoV)).rgb,horizonMask*.98);
-            float towards=dot(dir,uSun);
-            float disc=smoothstep(.9992,.99984,towards);
-            float corona=pow(max(towards,0.0),65.0);
-            float halo=pow(max(towards,0.0),8.0);
-            sky+=vec3(1.0,.74,.38)*corona*.38+vec3(1.0,.54,.26)*halo*.09;
-            sky=mix(sky,vec3(1.0,.94,.76)*2.0,disc);
-            // Neblina leve no horizonte e luz solar fisicamente estilizada.
+            float altitude=smoothstep(-.25,.75,dir.y);
+            // Horizonte azul mais claro e zenite azul forte, sem panorama.
+            vec3 sky=mix(vec3(.77,.88,.97),vec3(.21,.47,.75),altitude);
+            sky=mix(sky,vec3(.14,.36,.68),smoothstep(.48,1.0,dir.y)*.45);
+            float sun=max(dot(dir,normalize(uSun)),0.0);
+            sky+=vec3(.93,.82,.64)*pow(sun,48.0)*.22;
+            sky=mix(sky,vec3(1.0,.96,.79),smoothstep(.9991,.9998,sun));
             outColor=vec4(sky,1.0);
         }
         """;
@@ -161,7 +146,7 @@ final class Shaders {
         uniform float uSunVisible;
         out vec4 outColor;
         float linearDepth(float d){
-            float near=.12,far=420.0,z=d*2.0-1.0;
+            float near=.12,far=1100.0,z=d*2.0-1.0;
             return 2.0*near*far/(far+near-z*(far-near));
         }
         void main(){
@@ -246,11 +231,13 @@ final class Shaders {
         layout(location=4) in vec4 aRotation;
         uniform mat4 uMvp;
         uniform vec3 uEye;
+        uniform vec3 uSun;
         out vec2 vUv;
         out vec3 vNormal;
         out float vForest;
         out float vDist;
         out vec3 vWorld;
+        out float vGouraud;
         void main(){
             vec3 p=aPosition*aLocation.w;
             vec3 rotated=vec3(p.x*aRotation.x-p.z*aRotation.y,p.y,p.x*aRotation.y+p.z*aRotation.x);
@@ -258,6 +245,7 @@ final class Shaders {
             vec3 n=aNormal;
             vNormal=normalize(vec3(n.x*aRotation.x-n.z*aRotation.y,n.y,n.x*aRotation.y+n.z*aRotation.x));
             vWorld=world;vUv=aUv;vForest=aRotation.z;
+            vGouraud=max(0.0,dot(vNormal,normalize(uSun)));
             vDist=distance(world,uEye);
             gl_Position=uMvp*vec4(world,1.0);
         }
@@ -268,21 +256,67 @@ final class Shaders {
         in vec2 vUv;
         in vec3 vNormal,vWorld;
         in float vForest,vDist;
+        in float vGouraud;
         uniform sampler2D uTex;
         uniform vec3 uSun;
+        uniform float uDrawDistance;
         uniform float uLeaf;
         out vec4 outColor;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
-            float nl=max(0.,dot(normalize(vNormal),normalize(uSun)));
+            float nl=vGouraud;
             float sunlight=floor((nl*.83+.17+hash(floor(vWorld.xz*2.0))*.07)*6.)/6.;
-            float canopy=1.-vForest*(uLeaf>.5?.27:.38);
+            float canopy=1.-vForest*(uLeaf>.5?.44:.51);
             vec3 color=tex.rgb*canopy*(vec3(.46,.49,.49)+sunlight*vec3(.79,.74,.61));
-            float fog=smoothstep(70.,270.,vDist)*.84;
-            color=mix(color,vec3(.46,.50,.51),fog);
+            float fog=smoothstep(uDrawDistance*.38,uDrawDistance*.99,vDist)*.9;
+            color=mix(color,vec3(.70,.81,.90),fog);
+            float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
+            color=floor(clamp(color,0.0,1.0)*31.0+dither)/31.0;
             outColor=vec4(color,1.0);
+        }
+        """;
+
+    static final String CLOUD_V = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec3 aPos;
+        layout(location=1) in vec3 aNormal;
+        uniform mat4 uMvp;
+        uniform vec4 uCloudPosScale;
+        uniform vec3 uCloudCenter;
+        out vec3 vLocal,vNormal;
+        out float vElevation;
+        void main(){
+            vec3 pos=(aPos-uCloudCenter)*uCloudPosScale.w+uCloudPosScale.xyz;
+            vLocal=aPos;vNormal=aNormal;
+            vElevation=pos.y;
+            gl_Position=uMvp*vec4(pos,1.0);
+        }
+        """;
+    static final String CLOUD_F = """
+        #version 300 es
+        precision highp float;
+        in vec3 vLocal,vNormal;
+        in float vElevation;
+        uniform sampler2D uCloudMask;
+        uniform vec3 uSun;
+        uniform float uAlpha;
+        out vec4 outColor;
+        void main(){
+            vec3 n=normalize(vNormal);
+            vec2 localUv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
+            // Mascara halftone enviada pelo usuario, repetida nas faces voxel.
+            float mask=texture(uCloudMask,localUv*.95).r;
+            float light=max(.0,dot(n,normalize(uSun)));
+            float cel=floor((.40+light*.60)*5.0)/5.0;
+            vec3 ivory=vec3(.99,.962,.87),gray=vec3(.52,.55,.54);
+            vec3 color=mix(gray,ivory,cel);
+            color*=mix(.77,1.05,mask);
+            float dither=mod(gl_FragCoord.x+2.0*mod(gl_FragCoord.y,2.0),4.0)/4.0;
+            color=floor(clamp(color,0.0,1.0)*31.0+dither)/31.0;
+            outColor=vec4(color,uAlpha);
         }
         """;
 }

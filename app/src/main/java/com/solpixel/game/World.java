@@ -6,7 +6,7 @@ import java.util.Arrays;
 /** Relevo e biomas deterministas. Coordenadas globais estaveis em todos os chunks. */
 public final class World {
     static final int SAMPLES = 105;       // 105x105: custo reduzido; horizonte via skybox
-    static final float STEP = 3f;
+    static final float STEP = 3f; // compatibilidade com versoes anteriores
     private static final float SUN_X=.53f, SUN_Z=-.47f;
     static final int BROADLEAF=0, PINE=1;
     static class Mesh {
@@ -39,40 +39,51 @@ public final class World {
         float t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);
     }
     static float height(float x,float z){
-        // Domain warping evita colinas quadriculadas; continentes combinam tres macrozonas.
-        float wx=x+noise(x*.003f+7,z*.003f+9)*48f;
-        float wz=z+noise(x*.003f-8,z*.003f+27)*48f;
-        float macro=noise(wx*.0027f+58,wz*.0027f-43);
-        float mountain=smooth(.08f,.46f,macro);
-        float plain=1f-smooth(-.45f,-.09f,macro);
-        float hill=noise(wx*.009f,wz*.009f)*9f +noise(wx*.028f+31,wz*.028f-29)*2.5f;
-        float ridged=1f-Math.abs(noise(wx*.008f+40,wz*.008f+33));
-        ridged=(float)Math.pow(ridged,2.6);
-        float peaks=mountain*(26f+ridged*88f+noise(wx*.018f,wz*.018f)*13f);
-        float flat=noise(wx*.018f-41,wz*.018f+19)*.30f;
-        float h=(1f-plain)*(hill+peaks)+plain*flat;
-        // Planicie inicial realmente plana, com transicao gradual.
-        float start=1f-smooth(32,75,(float)Math.hypot(x,z));
-        return h*(1-start)+.15f*start;
+        // Terreno de frequencias baixas, com topo arredondado em vez de "agulhas".
+        float wx=x+noise(x*.0025f+7,z*.0025f+9)*43f;
+        float wz=z+noise(x*.0025f-8,z*.0025f+27)*43f;
+        float continent=noise(wx*.0020f+58,wz*.0020f-43);
+        float mountain=smooth(.02f,.46f,continent);
+        float plains=1f-smooth(-.39f,-.07f,continent);
+        float hills=noise(wx*.007f,wz*.007f)*7.5f + noise(wx*.022f+31,wz*.022f-29)*2.1f;
+        float dome=.5f+.5f*noise(wx*.0048f+40,wz*.0048f+33);
+        dome=smooth(.18f,.95f,dome);
+        float mountainTop=mountain*(13f+84f*dome+8f*noise(wx*.011f,wz*.011f));
+        float plain=(noise(wx*.012f-41,wz*.012f+19)*.24f);
+        float result=(1f-plains)*(hills+mountainTop)+plains*plain;
+        float spawn=1f-smooth(35,88,(float)Math.hypot(x,z));
+        return result*(1-spawn)+.15f*spawn;
     }
-    /** Densidade varia nas bordas, com vazios naturais, clareiras e teto de altitude. */
+    /** Densidade multi-escala: manchas extensas, microclareiras e bordas orgânicas.
+     *  Nao existe um contador de arvores por cluster: cada ponto e aceito pela mascara. */
     static float forestDensity(float x,float z){
-        float n=noise(x*.0062f+19,z*.0062f-83)*.72f +noise(x*.025f-6,z*.025f+9)*.28f;
-        float edge=smooth(-.20f,.30f,n);
-        float clearing=1f-smooth(28,64,(float)Math.hypot(x,z));
-        float holes=smooth(-.38f,-.12f,noise(x*.012f+93,z*.012f+21));
-        float altitude=1f-smooth(32,85,height(x,z));
-        return Math.max(0f,Math.min(1f,edge*holes*altitude*(1f-clearing)));
+        float wx=x+noise(x*.0029f+31,z*.0029f-22)*66f;
+        float wz=z+noise(x*.0029f-71,z*.0029f+17)*66f;
+        float region=noise(wx*.0048f+19,wz*.0048f-83)*.78f +
+                     noise(wx*.014f-6,wz*.014f+9)*.22f;
+        float canopy=smooth(-.32f,.15f,region);
+        float smaller=noise(wx*.025f+29,wz*.025f-31);
+        canopy*=.62f+.38f*smooth(-.43f,.28f,smaller);
+        // Vazios amplos que surgem mesmo no interior da floresta.
+        float gaps=smooth(-.44f,-.17f,noise(wx*.011f+93,wz*.011f+21));
+        float slope=Math.abs(height(x+3,z)-height(x-3,z))+
+                    Math.abs(height(x,z+3)-height(x,z-3));
+        float altitude=1f-smooth(60,105,height(x,z));
+        float steep=1f-smooth(6,18,slope);
+        float spawn=smooth(33,90,(float)Math.hypot(x,z));
+        return Math.max(0,Math.min(1,canopy*gaps*steep*altitude*spawn));
     }
-    /** >0.5 designa o bioma de coniferas; macromascara muda suavemente. */
     static float pineMask(float x,float z){
-        return smooth(-.12f,.40f,noise(x*.0038f+184,z*.0038f-71));
+        float warp=noise(x*.0038f+114,z*.0038f-41)*38f;
+        return smooth(-.24f,.28f,noise((x+warp)*.0028f+184,(z-warp)*.0028f-71));
     }
-    static Mesh ground(float cx,float cz){
-        float left=cx-(SAMPLES-1)*STEP*.5f,top=cz-(SAMPLES-1)*STEP*.5f;
+    static Mesh ground(float cx,float cz){return ground(cx,cz,156f);}
+    static Mesh ground(float cx,float cz,float radius){
+        float step=(radius*2f)/(SAMPLES-1);
+        float left=cx-radius,top=cz-radius;
         FloatList v=new FloatList();ShortList ids=new ShortList();
         for(int z=0;z<SAMPLES;z++)for(int x=0;x<SAMPLES;x++){
-            float wx=left+x*STEP,wz=top+z*STEP,h=height(wx,wz);
+            float wx=left+x*step,wz=top+z*step,h=height(wx,wz);
             float dx=height(wx-1,wz)-height(wx+1,wz);
             float dz=height(wx,wz-1)-height(wx,wz+1);
             float len=(float)Math.sqrt(dx*dx+dz*dz+4);
@@ -104,51 +115,52 @@ public final class World {
             broadleafInstances=broad;pineInstances=pine;
         }
     }
-    static Decoration decorate(float cx,float cz){
+    static Decoration decorate(float cx,float cz){return decorate(cx,cz,156f);}
+    static Decoration decorate(float cx,float cz,float radius){
         FloatList v=new FloatList(),shadows=new FloatList(),broad=new FloatList(),pine=new FloatList();
         ShortList ids=new ShortList(),shadowIds=new ShortList();
         ArrayList<Tree> trees=new ArrayList<>();
-        float range=(SAMPLES-1)*STEP*.5f-10f;
-        final float grid=38f;
-        int minX=(int)Math.floor((cx-range-15)/grid),maxX=(int)Math.ceil((cx+range+15)/grid);
-        int minZ=(int)Math.floor((cz-range-15)/grid),maxZ=(int)Math.ceil((cz+range+15)/grid);
-        // Cada celula pode conter um pequeno bosque de 4-6 arvores.
+        // Limite visual proprio para arvores; distancia do solo configuravel em separado.
+        float range=Math.min(radius-12f,236f);
+        final float spacing=8.6f;
+        int minX=(int)Math.floor((cx-range)/spacing)-1,maxX=(int)Math.ceil((cx+range)/spacing)+1;
+        int minZ=(int)Math.floor((cz-range)/spacing)-1,maxZ=(int)Math.ceil((cz+range)/spacing)+1;
         for(int iz=minZ;iz<=maxZ;iz++)for(int ix=minX;ix<=maxX;ix++){
-            float coreX=(ix+.5f)*grid+hash(ix+33,iz-22)*7;
-            float coreZ=(iz+.5f)*grid+hash(ix-31,iz+52)*7;
-            float density=forestDensity(coreX,coreZ);
-            if(density<.32f||n01(ix*7,iz*11) > density*.80f)continue;
-            int kind=pineMask(coreX,coreZ)>.55f?PINE:BROADLEAF;
-            int count=4+(int)(n01(ix*21+4,iz*9-9)*3f);  // 4,5,6
-            for(int i=0;i<count;i++){
-                float angle=(float)(i*2.39996323+n01(ix+89,iz+43)*6.28318);
-                float dist=2.9f+(i%3)*2.8f+n01(ix*19+i,iz*21-i)*2.4f;
-                float px=coreX+(float)Math.cos(angle)*dist;
-                float pz=coreZ+(float)Math.sin(angle)*dist;
-                if(Math.abs(px-cx)>range||Math.abs(pz-cz)>range)continue;
-                float local=forestDensity(px,pz);
-                if(local<.32f)continue;
-                float py=height(px,pz);
-                if(Math.abs(height(px+1.5f,pz)-height(px-1.5f,pz))>3.1f ||
-                   Math.abs(height(px,pz+1.5f)-height(px,pz-1.5f))>3.1f)continue;
-                float size=(kind==PINE?.38f:.77f)*( .87f +n01(ix*31+i,iz*37+i)*.33f);
-                float radius=(kind==PINE?2.20f:.52f)*size;
-                float rotation=n01(ix*13+i*4,iz*13-i*2)*6.28318f;
-                // GLB tem tronco minimo em y=-2.6.
-                Tree tree=new Tree(kind,px,py+2.6f*size,pz,size,rotation,local,radius);
-                trees.add(tree);
-                // Escurecimento de contato; plano no solo segue o relevo.
-                shadow(shadows,shadowIds,px,pz,(kind==PINE?6f:4.5f)*size,(kind==PINE?3f:2.6f)*size);
-                FloatList dest=kind==PINE?pine:broad;
-                dest.add(tree.x);dest.add(tree.y);dest.add(tree.z);dest.add(tree.scale);
-                dest.add(tree.cos);dest.add(tree.sin);dest.add(local);dest.add(0);
-            }
+            // Jitter espacial determinista: distribui naturalmente sem padrao de grade.
+            float px=(ix+.5f)*spacing+hash(ix*17+33,iz*31-22)*spacing*.40f;
+            float pz=(iz+.5f)*spacing+hash(ix*19-31,iz*23+52)*spacing*.40f;
+            if(Math.abs(px-cx)>range||Math.abs(pz-cz)>range)continue;
+            float density=forestDensity(px,pz);
+            if(density<.13f)continue;
+            float distance=(float)Math.hypot(px-cx,pz-cz);
+            // LOD estocastico e estavel: menos copias nas manchas longinquas.
+            float lod=1f-.63f*smooth(100,205,distance);
+            float probability=density*.61f*lod;
+            if(n01(ix*29+5,iz*37+9)>probability)continue;
+            // Variacao por arvore, com ecotonos mistos em vez de linhas duras.
+            float pineProbability=pineMask(px,pz);
+            int kind=n01(ix*11+91,iz*13-17)<pineProbability?PINE:BROADLEAF;
+            float py=height(px,pz);
+            float base=(kind==PINE?.38f:.77f);
+            float size=base*(.79f+n01(ix*31+7,iz*37+11)*.48f);
+            if(kind==PINE)size*=1.20f; // pinheiros 20% maiores
+            float radiusTrunk=(kind==PINE?1.60f:.52f)*size;
+            float rotation=n01(ix*13+4,iz*13-2)*6.283185f;
+            // Origem GLB = -2.6. Enterrar 3% da altura total de cada arvore.
+            float modelHeight=(kind==PINE?53f:13.3f);
+            float groundOffset=2.6f*size-.03f*modelHeight*size;
+            Tree tree=new Tree(kind,px,py+groundOffset,pz,size,rotation,density,radiusTrunk);
+            trees.add(tree);
+            shadow(shadows,shadowIds,px,pz,(kind==PINE?10f:5f)*size,(kind==PINE?4f:2.7f)*size);
+            FloatList dest=kind==PINE?pine:broad;
+            dest.add(tree.x);dest.add(tree.y);dest.add(tree.z);dest.add(tree.scale);
+            dest.add(tree.cos);dest.add(tree.sin);dest.add(density);dest.add(0);
         }
-        // Pedras decorativas sem colisao, espalhadas sobretudo fora das florestas.
-        final float rockGrid=34f;
+        // Pedras nao colidem, dispersas em locais abertos.
+        final float rockGrid=39f;
         for(int rz=(int)Math.floor((cz-range)/rockGrid);rz<=(int)Math.ceil((cz+range)/rockGrid);rz++)
             for(int rx=(int)Math.floor((cx-range)/rockGrid);rx<=(int)Math.ceil((cx+range)/rockGrid);rx++){
-                if(n01(rx*17+51,rz*23-31)<.82f)continue;
+                if(n01(rx*17+51,rz*23-31)<.86f)continue;
                 float px=(rx+.5f)*rockGrid+hash(rx+77,rz-71)*10f;
                 float pz=(rz+.5f)*rockGrid+hash(rx-44,rz+59)*10f;
                 if(Math.abs(px-cx)>range||Math.abs(pz-cz)>range)continue;

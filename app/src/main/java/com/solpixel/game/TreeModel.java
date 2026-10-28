@@ -19,6 +19,8 @@ final class TreeModel {
     private final Primitive[] primitives;
     private final int[] textures;
     private final int instanceBuffer;
+    private float[] uploadedInstances;
+
 
     private static final class Primitive {
         int vao,vertices,indices,count,material;
@@ -49,8 +51,8 @@ final class TreeModel {
             Bitmap bmp=BitmapFactory.decodeByteArray(glb,offset,length);
             if(bmp==null)throw new IllegalStateException("PNG da arvore nao pode ser decodificado");
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,textures[k]);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR_MIPMAP_LINEAR);
-            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_NEAREST_MIPMAP_NEAREST);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_NEAREST);
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_REPEAT);
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_REPEAT);
             GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bmp,0);
@@ -109,10 +111,13 @@ final class TreeModel {
     void draw(int program,float[] instances){
         int count=instances.length/8;
         if(count==0)return;
-        FloatBuffer buffer=ByteBuffer.allocateDirect(instances.length*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
-        buffer.put(instances).position(0);
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,instanceBuffer);
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER,instances.length*4,buffer,GLES30.GL_DYNAMIC_DRAW);
+        if(uploadedInstances!=instances){
+            FloatBuffer buffer=ByteBuffer.allocateDirect(instances.length*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
+            buffer.put(instances).position(0);
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,instanceBuffer);
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER,instances.length*4,buffer,GLES30.GL_STATIC_DRAW);
+            uploadedInstances=instances;
+        }
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"uTex"),1);
         for(int i=0;i<primitives.length;i++){
             Primitive p=primitives[i];
