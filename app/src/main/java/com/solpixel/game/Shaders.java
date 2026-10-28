@@ -330,6 +330,7 @@ final class Shaders {
         }
         """;
 
+    // SolPixel vegetation v0.11 - quatro colunas, dez texturas em atlas 1024px.
     static final String GRASS_V = """
         #version 300 es
         precision highp float;
@@ -341,18 +342,20 @@ final class Shaders {
         uniform vec3 uEye;
         out vec2 vUv;
         out float vDist,vShade;
+        flat out int vKind;
         void main(){
-            float size=aInstancePosSize.w;
-            vec3 p=aPos*size;
+            vec3 p=aPos*aInstancePosSize.w;
             vec3 rotated=vec3(p.x*aInstanceExtra.x-p.z*aInstanceExtra.y,
                               p.y,p.x*aInstanceExtra.y+p.z*aInstanceExtra.x);
             vec3 world=aInstancePosSize.xyz+rotated;
             gl_Position=uMvp*vec4(world,1.0);
             float n=floor(aInstanceExtra.z+.5);
-            float col=mod(n,3.0),row=floor(n/3.0);
-            vUv=(vec2(col,row)*80.0+vec2(8.0)+aUv*64.0)/256.0;
+            float col=mod(n,4.0),row=floor(n/4.0);
+            // Cada sprite ocupa 240x240 e tem borda de 8 pixels contra bleed.
+            vUv=(vec2(col,row)*256.0+vec2(8.0)+aUv*240.0)/1024.0;
             vDist=distance(world,uEye);
             vShade=aInstanceExtra.w;
+            vKind=int(n);
         }
         """;
     static final String GRASS_F = """
@@ -360,21 +363,27 @@ final class Shaders {
         precision highp float;
         in vec2 vUv;
         in float vDist,vShade;
+        flat in int vKind;
         uniform sampler2D uGrassAtlas;
         uniform vec3 uGrassTint;
         uniform float uGrassLimit;
         out vec4 outColor;
         void main(){
             vec4 tex=texture(uGrassAtlas,vUv);
-            if(tex.a<.48)discard;
-            // Dissolve gradual na distancia, sem transparencia ordenada.
-            float fade=1.0-smoothstep(uGrassLimit*.72,uGrassLimit,vDist);
-            float px=mod(floor(gl_FragCoord.x),4.0),py=mod(floor(gl_FragCoord.y),4.0);
-            float threshold=(px+py*4.0+.5)/16.0;
-            if(fade<threshold)discard;
-            float highlight=smoothstep(.20,.71,tex.r);
-            vec3 color=vec3(.14,.365,.105)*uGrassTint;
-            color*=mix(.67,1.20,highlight)*mix(.80,1.20,vShade);
+            if(tex.a<.46)discard;
+            // Dissolve distante com dithering Bayer verdadeiro, sem alpha blending.
+            float fade=1.0-smoothstep(uGrassLimit*.70,uGrassLimit,vDist);
+            const float bayer[16]=float[16](
+                 0., 8., 2.,10.,12., 4.,14., 6.,
+                 3.,11., 1., 9.,15., 7.,13., 5.);
+            int ix=int(mod(floor(gl_FragCoord.x),4.0));
+            int iy=int(mod(floor(gl_FragCoord.y),4.0));
+            if(fade<(bayer[iy*4+ix]+.5)/16.0)discard;
+            // Preserva vermelho das flores e branco dos cogumelos.
+            float influence=vKind<=2?.87:(vKind==8?.78:(vKind==9?.52:.34));
+            vec3 dayTint=mix(vec3(1.0),uGrassTint,influence);
+            vec3 color=tex.rgb*dayTint;
+            color*=mix(.83,1.15,clamp(vShade,0.0,1.0));
             outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;

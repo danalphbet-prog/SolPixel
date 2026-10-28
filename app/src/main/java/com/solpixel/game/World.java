@@ -213,47 +213,116 @@ public final class World {
                 float size=.5f+n01(rx*29,rz*37)*1.25f,py=height(px,pz);
                 box(v,ids,px-size,py-.18f,pz-size*.8f,px+size,py+size*.68f,pz+size*.8f,3);
             }
-        // Grama em manchas por noise: campos abertos com tufos densos,
-        // florestas fechadas com raras graminhas pequenas. Coordenadas globais.
+        // SolPixel vegetation v0.11: ilhas de grama, trigo em campos extensos,
+        // samambaias em florestas e cogumelos proximos a troncos.
+        // Toda a geracao ocorre no worker existente de World.decorate().
         FloatList grass=new FloatList();
-        final float grassRadius=Math.min(range,Math.max(150f,radius*.30f+98f));
-        final float grassStep=2.85f;
-        int a=(int)Math.floor((cx-grassRadius)/grassStep)-1;
-        int b=(int)Math.ceil((cx+grassRadius)/grassStep)+1;
-        int c=(int)Math.floor((cz-grassRadius)/grassStep)-1;
-        int d=(int)Math.ceil((cz+grassRadius)/grassStep)+1;
-        for(int gz=c;gz<=d;gz++)for(int gx=a;gx<=b;gx++){
-            float px=(gx+.5f)*grassStep+hash(gx*13+19,gz*17-37)*grassStep*.39f;
-            float pz=(gz+.5f)*grassStep+hash(gx*37-11,gz*29+61)*grassStep*.39f;
+        final float grassRadius=Math.min(range-8f,Math.max(145f,radius*.29f+72f));
+        final float grid=2.25f;
+        int minGX=(int)Math.floor((cx-grassRadius)/grid)-1;
+        int maxGX=(int)Math.ceil((cx+grassRadius)/grid)+1;
+        int minGZ=(int)Math.floor((cz-grassRadius)/grid)-1;
+        int maxGZ=(int)Math.ceil((cz+grassRadius)/grid)+1;
+        // Indice espacial para cogumelos: apenas arvores reais proximas (2-11 m).
+        final float treeCell=16f;
+        HashMap<Long,ArrayList<Tree>> nearTrees=new HashMap<>();
+        for(Tree t:trees){
+            int tx=(int)Math.floor(t.x/treeCell),tz=(int)Math.floor(t.z/treeCell);
+            long key=cellKey(tx,tz);
+            ArrayList<Tree> list=nearTrees.get(key);
+            if(list==null){list=new ArrayList<>();nearTrees.put(key,list);}
+            list.add(t);
+        }
+        for(int gz=minGZ;gz<=maxGZ;gz++)for(int gx=minGX;gx<=maxGX;gx++){
+            float px=(gx+.5f)*grid+hash(gx*13+19,gz*17-37)*grid*.40f;
+            float pz=(gz+.5f)*grid+hash(gx*37-11,gz*29+61)*grid*.40f;
             float dx=px-cx,dz=pz-cz;
             if(dx*dx+dz*dz>grassRadius*grassRadius)continue;
-            float forest=forestDensity(px,pz);
-            float open=1f-forest;
-            float large=smooth(-.45f,.13f,noise(px*.021f+151,pz*.021f-79));
-            float small=.62f+.38f*smooth(-.30f,.40f,noise(px*.075f-63,pz*.075f+44));
-            float probability=(.07f+.82f*open)*large*small;
-            if(forest>.62f)probability*=.065f;
-            else if(forest>.39f)probability*=.32f;
-            if(n01(gx*31+91,gz*47-59)>probability)continue;
             float slope=Math.abs(height(px+1f,pz)-height(px-1f,pz))+
                         Math.abs(height(px,pz+1f)-height(px,pz-1f));
-            if(slope>2.4f)continue;
-            float variant=n01(gx*41-7,gz*23+51)*6f;
-            int species=Math.min(5,(int)variant);
-            // Apenas grama pequena/rala nas sombras profundas de um bosque.
-            if(forest>.62f && species!=2 && species!=3 && species!=4)continue;
-            float size=.68f+n01(gx*73+11,gz*61+7)*.67f;
-            if(species==0)size*=1.25f;
-            if(species==2)size*=.72f;
+            if(slope>2.9f)continue;
+            float elevation=height(px,pz);
+            float forest=forestDensity(px,pz);
+            float wood=smooth(.18f,.70f,forest);
+            float open=1f-wood;
+            // Mascaras em duas escalas: cada ilha tem centro denso e borda rala.
+            float island=smooth(-.28f,.23f,noise(px*.014f+201,pz*.014f-97));
+            float details=smooth(-.33f,.13f,noise(px*.066f-29,pz*.066f+183));
+            float grassCoverage=island*(.30f+.70f*details);
+            // Arquipelagos de trigo em regioes abertas; manchas com centenas de m.
+            float wheatMacro=smooth(-.09f,.36f,noise(px*.0049f-155,pz*.0049f+177));
+            float wheatIslands=smooth(-.33f,.13f,noise(px*.017f+55,pz*.017f-89));
+            float wheatField=wheatMacro*(.58f+.42f*wheatIslands)*open;
+            // Em campos de trigo, trigo supera grama; em prados, o contrario.
+            float wheatChance=(.05f+.91f*wheatField)*open*smooth(.22f,.80f,wheatField);
+            if(elevation>88f||slope>1.65f)wheatChance=0f;
+            float grassChance=.10f+.78f*grassCoverage;
+            grassChance*=1f-.77f*smooth(.29f,.80f,wheatField);
+            // Dentro da floresta a grama fica 60% menos frequente.
+            // A atenuacao progressiva evita limites bruscos entre biomas.
+            grassChance*=1f-.60f*wood;
+            // Samambaia 70% menos frequente nos campos e clareiras.
+            float fernChance=.265f*(.30f+.70f*wood)*(.30f+.70f*island);
+            // Flores raras, comparaveis em chance aos cogumelos por celula.
+            float flowerChance=.027f*(.30f+.70f*open);
+            // Cogumelos exclusivamente em floresta/borda, perto de troncos,
+            // mas nunca colados na base da arvore.
+            boolean nearTrunk=false;
+            if(forest>.14f){
+                int tx=(int)Math.floor(px/treeCell),tz=(int)Math.floor(pz/treeCell);
+                for(int tz2=tz-1;tz2<=tz+1 && !nearTrunk;tz2++)
+                    for(int tx2=tx-1;tx2<=tx+1 && !nearTrunk;tx2++){
+                        ArrayList<Tree> candidates=nearTrees.get(cellKey(tx2,tz2));
+                        if(candidates==null)continue;
+                        for(Tree t:candidates){
+                            float tdx=px-t.x,tdz=pz-t.z;
+                            float dist2=tdx*tdx+tdz*tdz;
+                            float minimum=t.radius+1.45f;
+                            if(dist2>minimum*minimum && dist2<10.8f*10.8f){
+                                nearTrunk=true;break;
+                            }
+                        }
+                    }
+            }
+            float mushroomChance=nearTrunk?.028f*(.35f+.65f*wood):0f;
+            int type=-1;
+            if(n01(gx*73+51,gz*61-19)<wheatChance)type=9;
+            else if(n01(gx*31+91,gz*47-59)<grassChance)type=(int)(n01(gx*37-7,gz*43+19)*3f);
+            else if(n01(gx*29+27,gz*67-41)<fernChance)type=8;
+            else if(n01(gx*53+7,gz*79-13)<flowerChance)type=3+(int)(n01(gx*17-13,gz*67+51)*3f);
+            else if(n01(gx*83+13,gz*89-7)<mushroomChance)type=6+(int)(n01(gx*43-33,gz*41+7)*2f);
+            if(type<0)continue;
+            float size=.75f+n01(gx*73+11,gz*61+7)*.50f;
+            if(type==8)size*=.50f; // Samambaia: 50% da grama.
+            if(type==9)size*=1.42f; // Trigo alto.
+            if(type>=6 && type<=7)size*=1.05f;
             float angle=n01(gx*17-19,gz*13+5)*6.2831853f;
             float variation=n01(gx*19+37,gz*11-23);
-            float py=height(px,pz)-.035f*size;
-            grass.add(px);grass.add(py);grass.add(pz);grass.add(size);
-            grass.add((float)Math.cos(angle));grass.add((float)Math.sin(angle));
-            grass.add(species);grass.add(variation);
+            addVegetation(grass,px,elevation,pz,size,angle,type,variation);
+            // Vegetacao vizinha no centro das ilhas, formando conjuntos.
+            // As bordas continuam mais vazias, sem interrupcao abrupta.
+            float cluster=type==9?wheatField:grassCoverage;
+            if((type<=2||type==9) && cluster>.38f &&
+               n01(gx*71-39,gz*17+23)<.63f*cluster){
+                float a2=n01(gx*11+55,gz*37-17)*6.2831853f;
+                float separation=.30f+.42f*n01(gx*13-19,gz*31+7);
+                float x2=px+(float)Math.cos(a2)*separation;
+                float z2=pz+(float)Math.sin(a2)*separation;
+                float y2=height(x2,z2);
+                float s2=size*(.81f+.30f*n01(gx*29+31,gz*67-7));
+                int species2=type==9?9:(int)(n01(gx*73-11,gz*83+19)*3f);
+                addVegetation(grass,x2,y2,z2,s2,angle+a2*.3f,species2,variation);
+            }
         }
         return new Decoration(new Mesh(v.array(),ids.array()),new Mesh(shadows.array(),shadowIds.array()),
                trees.toArray(new Tree[0]),broad.array(),pine.array(),grass.array());
+    }
+    private static void addVegetation(FloatList result,float x,float groundY,float z,
+                                      float size,float angle,int type,float shade){
+        // Alinha a origem dos sprites ao terreno, sem colisao ou fisica adicional.
+        result.add(x);result.add(groundY-.045f*size);result.add(z);result.add(size);
+        result.add((float)Math.cos(angle));result.add((float)Math.sin(angle));
+        result.add(type);result.add(shade);
     }
     static long cellKey(int x,int z){return ((long)x<<32)^(z&0xffffffffL);}
     /** Resolve apenas os 6 troncos mais proximos, com grade espacial 14m. */
