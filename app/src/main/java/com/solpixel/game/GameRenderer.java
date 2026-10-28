@@ -15,6 +15,8 @@ import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
 import java.util.Random;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
@@ -25,6 +27,19 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int emptyVao;
     private Target scene,bloomA,bloomB;
     private MeshGpu ground,objects,shadows;
+    private TreeModel broadleaf,pines;
+    private World.Decoration activeDecoration;
+    private int treeP,skyTexture;
+    private final ExecutorService worldWorker=Executors.newSingleThreadExecutor();
+    private volatile BuildResult completedWorld;
+    private volatile boolean buildingWorld;
+    private final float[] collisionPoint=new float[2];
+    private static final class BuildResult {
+        final float x,z;final World.Mesh ground;final World.Decoration decoration;
+        BuildResult(float x,float z,World.Mesh m,World.Decoration d){
+            this.x=x;this.z=z;this.ground=m;this.decoration=d;
+        }
+    }
     private int dustVao,dustVbo,dustCount;
     private final float[] proj=new float[16],view=new float[16],vp=new float[16];
     private final float[] forward=new float[3],right=new float[3],up=new float[3];
@@ -56,8 +71,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         blurP=program(Shaders.FULL_V,Shaders.BLUR_F);
         finalP=program(Shaders.FULL_V,Shaders.FINAL_F);
         dustP=program(Shaders.DUST_V,Shaders.DUST_F);
+        treeP=program(Shaders.TREE_V,Shaders.TREE_F);
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
+        skyTexture=loadSkyTexture();
+        try {
+            broadleaf=new TreeModel(context,"arvore-16.glb");
+            pines=new TreeModel(context,"arvore-2.glb");
+        } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores GLB",ex);}
         makeDust();
         baseX=99999f;baseZ=99999f;
         lastFrame=System.nanoTime();
@@ -76,16 +97,27 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
         long now=System.nanoTime();
-        float dt=Math.min(.045f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
+        float dt=Math.min(.075f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
-        if(Math.abs(x-baseX)>57||Math.abs(z-baseZ)>57){
-            baseX=Math.round(x/48f)*48f;baseZ=Math.round(z/48f)*48f;
-            if(ground!=null)ground.destroy();
-            if(objects!=null)objects.destroy();
-            if(shadows!=null)shadows.destroy();
-            ground=new MeshGpu(World.ground(baseX,baseZ));
-            World.Decoration d=World.decorate(baseX,baseZ);
-            objects=new MeshGpu(d.objects);shadows=new MeshGpu(d.shadows);
+        // Preparacao procedural fora da GL thread: nao engasga o joystick.
+        if(ground==null){
+            baseX=Math.round(x/64f)*64f;baseZ=Math.round(z/64f)*64f;
+            installWorld(new BuildResult(baseX,baseZ,World.ground(baseX,baseZ),World.decorate(baseX,baseZ)));
+        } else {
+            BuildResult ready=completedWorld;
+            if(ready!=null){
+                completedWorld=null;
+                installWorld(ready);
+                buildingWorld=false;
+            }
+            if((Math.abs(x-baseX)>67f||Math.abs(z-baseZ)>67f)&&!buildingWorld){
+                final float cx=Math.round(x/64f)*64f,cz=Math.round(z/64f)*64f;
+                buildingWorld=true;
+                worldWorker.execute(()->{
+                    try {completedWorld=new BuildResult(cx,cz,World.ground(cx,cz),World.decorate(cx,cz));}
+                    catch(Throwable err){Log.e("SolPixel","Erro construindo terreno",err);buildingWorld=false;}
+                });
+            }
         }
         float eyeY=World.height(x,z)+1.72f+airHeight;
         if(game.state==1 && airHeight<=.005f){
@@ -119,9 +151,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if(length>.06f){
             float speed=length>.92f?7.3f:5.45f;
             float c=(float)Math.cos(yaw),s=(float)Math.sin(yaw);
-            x+=(c*mx+s*my)*speed*dt;
-            z+=(s*mx-c*my)*speed*dt;
-            step+=dt*speed;
+            float targetX=x+(c*mx+s*my)*speed*dt;
+            float targetZ=z+(s*mx-c*my)*speed*dt;
+            collisionPoint[0]=targetX;collisionPoint[1]=targetZ;
+            // Apenas troncos das 6 arvores mais proximas; movimento desliza nas bordas.
+            World.collide(collisionPoint,.48f,activeDecoration);
+            float oldX=x,oldZ=z;
+            x=collisionPoint[0];z=collisionPoint[1];
+            step+=(float)Math.hypot(x-oldX,z-oldZ);
         }
         if(jumpPressed){
             if(airHeight<=.001f){vy=6.6f;airHeight=.003f;}
@@ -144,6 +181,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         v3(skyP,"uForward",forward);v3(skyP,"uRight",right);v3(skyP,"uUp",up);v3(skyP,"uSun",SUN);
         f1(skyP,"uAspect",sceneW/(float)sceneH);
         f1(skyP,"uFov",(float)Math.tan(Math.toRadians(67)/2));
+        texture(3,skyTexture);i1(skyP,"uSkybox",3);
+        f1(skyP,"uSkyAvailable",skyTexture==0?0f:1f);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
         GLES30.glDepthMask(true);
@@ -162,6 +201,15 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
         objects.draw();
+        // Duas especies GLB, geometria compartilhada; instancing evita centenas de draws.
+        if(activeDecoration!=null && broadleaf!=null && pines!=null){
+            GLES30.glUseProgram(treeP);
+            GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
+            GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
+            v3(treeP,"uSun",SUN);
+            broadleaf.draw(treeP,activeDecoration.broadleafInstances);
+            pines.draw(treeP,activeDecoration.pineInstances);
+        }
         // Poeira iluminada flutuante, sprites de ponto com textura radial.
         GLES30.glUseProgram(dustP);
         GLES30.glUniformMatrix4fv(loc(dustP,"uMvp"),1,false,vp,0);
@@ -214,6 +262,31 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(finalP,"uSunVisible",dz>.05f && ux>-.2f&&ux<1.2f&&uy>-.2f&&uy<1.2f?1:0);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
+    }
+    private void installWorld(BuildResult result){
+        baseX=result.x;baseZ=result.z;
+        if(ground!=null)ground.destroy();
+        if(objects!=null)objects.destroy();
+        if(shadows!=null)shadows.destroy();
+        ground=new MeshGpu(result.ground);
+        objects=new MeshGpu(result.decoration.objects);
+        shadows=new MeshGpu(result.decoration.shadows);
+        activeDecoration=result.decoration;
+    }
+    private int loadSkyTexture(){
+        try(InputStream input=context.getAssets().open("skybox_horizon.png")){
+            BitmapFactory.Options options=new BitmapFactory.Options();options.inScaled=false;
+            Bitmap bitmap=BitmapFactory.decodeStream(input,null,options);
+            if(bitmap==null)return 0;
+            int[] id=new int[1];GLES30.glGenTextures(1,id,0);
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,id[0]);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_REPEAT);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_CLAMP_TO_EDGE);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MIN_FILTER,GLES30.GL_LINEAR_MIPMAP_LINEAR);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_MAG_FILTER,GLES30.GL_LINEAR);
+            GLUtils.texImage2D(GLES30.GL_TEXTURE_2D,0,bitmap,0);
+            GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D);bitmap.recycle();return id[0];
+        }catch(Exception ex){Log.w("SolPixel","Skybox indisponivel: "+ex);return 0;}
     }
     private int loadTexture(){
         int[] t=new int[1];GLES30.glGenTextures(1,t,0);

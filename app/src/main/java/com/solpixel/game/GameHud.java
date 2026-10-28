@@ -17,7 +17,8 @@ public final class GameHud extends View {
     GameHud(GameActivity game) {
         super(game); this.game = game;
         density=getResources().getDisplayMetrics().density;
-        setLayerType(View.LAYER_TYPE_SOFTWARE,null);
+        // Usar Canvas acelerado pelo hardware. Layer SOFTWARE prejudicava os toques
+        // e o desempenho do GLSurfaceView rodando ao fundo.
     }
     private float dp(float v) { return v*density; }
     void resetControls() {
