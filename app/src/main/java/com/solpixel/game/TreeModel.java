@@ -132,6 +132,31 @@ final class TreeModel {
         }
         draw(program,visibleInstances);
     }
+    /** Profundidade real de ate 64 arvores por especie no mapa solar local. */
+    void drawShadowCasters(int program,float[] source,float x,float z,
+                           float radius,int maximum){
+        if(source==null||source.length==0)return;
+        float[] packed=new float[maximum*8];
+        float[] distances=new float[maximum];
+        int count=0;
+        for(int off=0;off<source.length;off+=8){
+            float dx=source[off]-x,dz=source[off+2]-z;
+            float ds=dx*dx+dz*dz;
+            if(ds>radius*radius)continue;
+            int slot=-1;
+            if(count<maximum){slot=count;count++;}
+            else {
+                int worst=0;
+                for(int i=1;i<count;i++)if(distances[i]>distances[worst])worst=i;
+                if(ds<distances[worst])slot=worst;
+            }
+            if(slot<0)continue;
+            System.arraycopy(source,off,packed,slot*8,8);
+            distances[slot]=ds;
+        }
+        if(count>0)draw(program,java.util.Arrays.copyOf(packed,count*8));
+    }
+
     void draw(int program,float[] instances){
         int count=instances.length/8;
         if(count==0)return;

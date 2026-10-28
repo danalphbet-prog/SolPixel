@@ -59,6 +59,11 @@ public final class World {
         float plain=noise(wx*.009f-41,wz*.009f+19)*.22f;
         float result=(1f-plains)*(lowHills+tallHills+mountainTop)+plains*plain;
         if(result>65f)result=65f+74f*(1f-(float)Math.exp(-(result-65f)/74f));
+        // Macicos raros e largos que podem ultrapassar a camada de nuvens (~220-280m).
+        // Soft ramp + noise lento evitam o formato de agulha / pico pontudo.
+        float giantRegion=smooth(.31f,.61f,noise(wx*.00172f+317,wz*.00172f-229));
+        float giantCrown=smooth(.03f,.79f,.5f+.5f*noise(wx*.00275f-141,wz*.00275f+211));
+        result+=giantRegion*(63f+225f*giantCrown)*(1f-plains);
         float spawn=1f-smooth(35,88,(float)Math.hypot(x,z));
         return result*(1-spawn)+.15f*spawn;
     }
@@ -255,6 +260,8 @@ public final class World {
             float wheatField=wheatMacro*(.58f+.42f*wheatIslands)*open;
             // Em campos de trigo, trigo supera grama; em prados, o contrario.
             float wheatChance=(.05f+.91f*wheatField)*open*smooth(.22f,.80f,wheatField);
+            // Centro dos arquipelagos mais fechado, sem afetar os biomas de floresta.
+            wheatChance=Math.min(.985f,wheatChance*1.28f);
             if(elevation>88f||slope>1.65f)wheatChance=0f;
             float grassChance=.10f+.78f*grassCoverage;
             grassChance*=1f-.77f*smooth(.29f,.80f,wheatField);
@@ -313,9 +320,31 @@ public final class World {
                 int species2=type==9?9:(int)(n01(gx*73-11,gz*83+19)*3f);
                 addVegetation(grass,x2,y2,z2,s2,angle+a2*.3f,species2,variation);
             }
+            // Mais hastes agrupadas nas ilhas de trigo, sem quota fixa de plantas.
+            if(type==9 && wheatField>.45f){
+                float fill=smooth(.45f,.90f,wheatField);
+                for(int k=0;k<3;k++){
+                    float odds=n01(gx*(43+8*k)+21,gz*(47+6*k)-51);
+                    if(odds>(.58f+.34f*fill))continue;
+                    float aa=n01(gx*(67+6*k)-17,gz*(37+6*k)+23)*6.2831853f;
+                    float rr=.25f+(.34f+.16f*k)*n01(gx*(31+6*k)+7,gz*(53+4*k)-13);
+                    float xx=px+(float)Math.cos(aa)*rr;
+                    float zz=pz+(float)Math.sin(aa)*rr;
+                    float ss=size*(.76f+.40f*n01(gx*(11+6*k),gz*(17+4*k)));
+                    addVegetation(grass,xx,height(xx,zz),zz,ss,angle+aa*.27f,9,variation);
+                }
+            }
         }
         return new Decoration(new Mesh(v.array(),ids.array()),new Mesh(shadows.array(),shadowIds.array()),
                trees.toArray(new Tree[0]),broad.array(),pine.array(),grass.array());
+    }
+    /** Campo continuo 0..1 para aumentar poeira sobre trigo sem depender da camera. */
+    static float wheatField(float x,float z){
+        float forest=forestDensity(x,z);
+        float open=1f-smooth(.18f,.70f,forest);
+        float macro=smooth(-.09f,.36f,noise(x*.0049f-155,z*.0049f+177));
+        float islands=smooth(-.33f,.13f,noise(x*.017f+55,z*.017f-89));
+        return macro*(.58f+.42f*islands)*open;
     }
     private static void addVegetation(FloatList result,float x,float groundY,float z,
                                       float size,float angle,int type,float shade){

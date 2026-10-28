@@ -9,7 +9,9 @@ final class Shaders {
         layout(location=2) in vec2 aUv;
         layout(location=3) in float aMaterial;
         uniform mat4 uMvp;
+        uniform mat4 uLightVP;
         uniform vec3 uEye;
+        out vec4 vLightCoord;
         out vec3 vPos;
         out vec3 vNormal;
         out vec2 vUv;
@@ -20,6 +22,7 @@ final class Shaders {
         float hashGround(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         void main(){
             gl_Position=uMvp*vec4(aPos,1.0);
+            vLightCoord=uLightVP*vec4(aPos,1.0);
             vPos=aPos;vNormal=aNormal;vUv=aUv;
             vMat=int(floor(aMaterial+0.001));
             vForest=fract(aMaterial);
@@ -38,6 +41,9 @@ final class Shaders {
         in float vForest;
         in float vDist;
         in float vPatch;
+        in vec4 vLightCoord;
+        uniform sampler2D uShadowMap;
+        uniform float uShadowEnabled;
         uniform sampler2D uGround;
         uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
         uniform float uHasTerrainTextures;
@@ -46,6 +52,17 @@ final class Shaders {
         uniform float uDrawDistance;
         out vec4 outColor;
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
+        float sunlightFraction(vec4 lightCoord,float distanceFromEye){
+            if(uShadowEnabled<.5 || distanceFromEye>115.0)return 1.0;
+            vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
+            if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
+            float result=0.0;
+            for(int yy=0;yy<2;yy++)for(int xx=0;xx<2;xx++){
+                vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
+                result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
+            }
+            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
+        }
         void main(){
             vec3 n=normalize(vNormal);
             float ndotl=max(0.0,dot(n,normalize(uSun)));
@@ -88,9 +105,12 @@ final class Shaders {
                 float alpha= .34*(.8+.2*step(.5,grid));
                 outColor=vec4(vec3(.07,.11,.08),alpha); return;
             }
-            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84;
+            // Sol real bloqueado pelos GLB proximos + ceu ocluido pelo dossel.
+            float lightFraction=sunlightFraction(vLightCoord,vDist);
+            ambient*=1.0-clamp(vForest,0.0,1.0)*.36;
+            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction;
             vec3 color=albedo*(ambient+direct);
-            color*=1.0-clamp(vForest,0.0,1.0)*.30;
+            color*=1.0-clamp(vForest,0.0,1.0)*.17;
             // solpixel-v08: nevoa atmosferica desde meia distancia.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
@@ -174,6 +194,7 @@ final class Shaders {
         uniform sampler2D uScene,uDepth,uBloom;
         uniform vec2 uTexel,uSunUv;
         uniform float uSunVisible;
+        uniform float uForestNear;
         out vec4 outColor;
         float linearDepth(float d){
             float near=.12,far=2200.0,z=d*2.0-1.0;
@@ -224,8 +245,12 @@ final class Shaders {
                 }
                 float irregular=.75+.25*pow(max(0.0,cos(angle*13.0+.5)),4.0);
                 float shafts=shaftSamples*exp(-radius*2.7)*irregular*.72;
-                color+=vec3(1.0,.79,.55)*uSunVisible*sunGate*
-                       (halo+spikes+shafts);
+                // Feixes extras nas florestas proximas. Bloqueio de folhas
+                // pelo depth buffer; influencia apenas objetos ate 100m.
+                float nearby=1.0-smoothstep(46.0,100.0,dist);
+                float forestShafts=shafts*uForestNear*nearby*.95;
+                color+=vec3(1.0,.79,.55)*uSunVisible*
+                       (sunGate*(halo+spikes+shafts)+forestShafts);
             }
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));
@@ -233,6 +258,36 @@ final class Shaders {
             outColor=vec4(color*vignette,1.0);
         }
         """;
+    static final String SHADOW_V = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec3 aPosition;
+        layout(location=2) in vec2 aUv;
+        layout(location=3) in vec4 aLocation;
+        layout(location=4) in vec4 aRotation;
+        uniform mat4 uLightVP;
+        out vec2 vUv;
+        void main(){
+            float cs=cos(aRotation.w),sn=sin(aRotation.w);
+            vec3 p=aPosition*aLocation.w;
+            vec3 tilted=vec3(p.x,p.y*cs-p.z*sn,p.y*sn+p.z*cs);
+            vec3 rotated=vec3(tilted.x*aRotation.x-tilted.z*aRotation.y,
+                              tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
+            vUv=aUv;
+            gl_Position=uLightVP*vec4(aLocation.xyz+rotated,1.0);
+        }
+        """;
+    static final String SHADOW_F = """
+        #version 300 es
+        precision highp float;
+        in vec2 vUv;
+        uniform sampler2D uTex;
+        uniform float uLeaf;
+        void main(){
+            if(uLeaf>.5 && texture(uTex,vUv).a<.5)discard;
+        }
+        """;
+
     static final String DUST_V = """
         #version 300 es
         precision highp float;
@@ -272,7 +327,9 @@ final class Shaders {
         layout(location=3) in vec4 aLocation;
         layout(location=4) in vec4 aRotation;
         uniform mat4 uMvp;
+        uniform mat4 uLightVP;
         uniform vec3 uEye;
+        out vec4 vLightCoord;
         uniform vec3 uSun;
         out vec2 vUv;
         out vec3 vNormal;
@@ -288,6 +345,7 @@ final class Shaders {
             vec3 rotated=vec3(tilted.x*aRotation.x-tilted.z*aRotation.y,
                               tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
             vec3 world=aLocation.xyz+rotated;
+            vLightCoord=uLightVP*vec4(world,1.0);
             vec3 n=vec3(aNormal.x,aNormal.y*cs-aNormal.z*sn,
                         aNormal.y*sn+aNormal.z*cs);
             vNormal=normalize(vec3(n.x*aRotation.x-n.z*aRotation.y,n.y,
@@ -305,12 +363,25 @@ final class Shaders {
         in vec3 vNormal,vWorld;
         in float vForest,vDist;
         in float vGouraud;
-        uniform sampler2D uTex;
+        in vec4 vLightCoord;
+        uniform sampler2D uTex,uShadowMap;
+        uniform float uShadowEnabled;
         uniform vec3 uSun;
         uniform float uDrawDistance;
         uniform float uLeaf;
         out vec4 outColor;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+        float sunlightFraction(vec4 lightCoord,float distanceFromEye){
+            if(uShadowEnabled<.5 || distanceFromEye>115.0)return 1.0;
+            vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
+            if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
+            float result=0.0;
+            for(int yy=0;yy<2;yy++)for(int xx=0;xx<2;xx++){
+                vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
+                result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
+            }
+            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
+        }
         void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
@@ -318,8 +389,10 @@ final class Shaders {
             float upward=clamp(normalize(vNormal).y*.5+.5,0.0,1.0);
             vec3 ambient=mix(vec3(.22,.20,.17),vec3(.43,.50,.57),upward);
             float sunDiffuse=clamp(nl+(uLeaf>.5?.12:0.0),0.0,1.0);
-            vec3 sunlight=vec3(1.08,1.01,.89)*sunDiffuse*.82;
-            float canopy=1.-vForest*(uLeaf>.5?.28:.35);
+            float sunlightVis=sunlightFraction(vLightCoord,vDist);
+            vec3 sunlight=vec3(1.08,1.01,.89)*sunDiffuse*.82*sunlightVis;
+            ambient*=1.0-vForest*.30;
+            float canopy=1.-vForest*(uLeaf>.5?.30:.37);
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
@@ -340,6 +413,8 @@ final class Shaders {
         layout(location=3) in vec4 aInstanceExtra;
         uniform mat4 uMvp;
         uniform vec3 uEye;
+        uniform float uWindTime;
+        uniform vec2 uPlayerXZ,uPlayerVelocity;
         out vec2 vUv;
         out float vDist,vShade;
         flat out int vKind;
@@ -348,6 +423,16 @@ final class Shaders {
             vec3 rotated=vec3(p.x*aInstanceExtra.x-p.z*aInstanceExtra.y,
                               p.y,p.x*aInstanceExtra.y+p.z*aInstanceExtra.x);
             vec3 world=aInstancePosSize.xyz+rotated;
+            float dist=length(world.xz-uPlayerXZ);
+            float nearby=1.0-smoothstep(12.0,50.0,dist);
+            // O topo dobra, a base fica enraizada. Parado alem de 50m.
+            float tip=pow(clamp(aPos.y,0.0,1.0),1.55);
+            float wave=sin(uWindTime*1.65+world.x*.27+world.z*.18+aInstanceExtra.w*5.0);
+            vec2 sway=vec2(.115,.062)*wave*nearby;
+            float passing=(1.0-smoothstep(.45,2.1,dist))*
+                          clamp(length(uPlayerVelocity)*.20,0.0,1.0);
+            sway+=uPlayerVelocity*.065*passing;
+            world.xz+=tip*sway;
             gl_Position=uMvp*vec4(world,1.0);
             float n=floor(aInstanceExtra.z+.5);
             float col=mod(n,4.0),row=floor(n/4.0);

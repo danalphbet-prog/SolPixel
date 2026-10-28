@@ -35,6 +35,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private World.Decoration activeDecoration;
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
+    private ForestShadows forestShadows;
+    private float forestNear=0f;
+    private int vegetationFrame=0;
     private float cloudVisibility=1f;
     private int appliedWorldRevision=-1;
     private int pendingWorldRevision=0; // solpixel-v05: regenerate after forest settings change
@@ -91,6 +94,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         treeP=program(Shaders.TREE_V,Shaders.TREE_F);
         grassP=program(Shaders.GRASS_V,Shaders.GRASS_F);
         cloudP=program(Shaders.CLOUD_V,Shaders.CLOUD_F);
+        try {forestShadows=new ForestShadows(program(Shaders.SHADOW_V,Shaders.SHADOW_F));}
+        catch(Exception e){Log.w("SolPixel","Shadow map nao disponivel",e);forestShadows=null;}
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
         terrainDirt=loadOptionalGround("terrain_dirt.png");
@@ -180,6 +185,17 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         up[0]=-sinY*sinP;up[1]=cosP;up[2]=cosY*sinP;
         Matrix.setLookAtM(view,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
         Matrix.multiplyMM(vp,0,proj,0,view,0);
+        if(forestShadows!=null && activeDecoration!=null){
+            try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines);}
+            catch(Exception e){Log.w("SolPixel","Desativando sombras nesta GPU",e);forestShadows=null;}
+        }
+        // Estima bosque a frente, sem examinar milhares de arvores todo frame.
+        if(++vegetationFrame%12==0){
+            float a=World.forestDensity(x,z);
+            float b=World.forestDensity(x+forward[0]*28f,z+forward[2]*28f);
+            float c=World.forestDensity(x+forward[0]*60f,z+forward[2]*60f);
+            forestNear=Math.min(1f,Math.max(a,Math.max(b,c))*1.6f);
+        }
         drawScene(eyeY);
         bloom();
         composite();
@@ -262,6 +278,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,groundTexture);
         i1(meshP,"uGround",0);
+        bindForestShadow(meshP);
         texture(2,hasTerrainTextures?terrainDirt:groundTexture);
         texture(3,hasTerrainTextures?terrainMiddle:groundTexture);
         texture(4,hasTerrainTextures?terrainGrass:groundTexture);
@@ -286,6 +303,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
             f1(treeP,"uDrawDistance",game.renderDistance);
+            bindForestShadow(treeP);
             broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
             pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
@@ -296,7 +314,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUseProgram(grassP);
             GLES30.glUniformMatrix4fv(loc(grassP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
-            grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f);
+            grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
+                         time,x,z,moveVelocityX,moveVelocityZ);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(clouds!=null && cloudVisibility>.006f){
@@ -315,7 +334,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA,GLES30.GL_ONE);
         GLES30.glDepthMask(false);
         GLES30.glBindVertexArray(dustVao);
-        GLES30.glDrawArrays(GLES30.GL_POINTS,0,dustCount);
+        // Campos de trigo: ate 20% mais particulas sem reler/recriar VBO.
+        float field=World.wheatField(x,z);
+        int particles=185+Math.round(37f*Math.min(1f,field*1.8f));
+        GLES30.glDrawArrays(GLES30.GL_POINTS,0,particles);
         GLES30.glBindVertexArray(0);
         GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
@@ -365,6 +387,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             solar=forwardFactor*edgeFactor;
         }
         f1(finalP,"uSunVisible",solar);
+        f1(finalP,"uForestNear",forestShadows!=null && forestShadows.ready()?forestNear:0f);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
     }
@@ -396,6 +419,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             return id[0];
         }catch(Exception ex){Log.w("SolPixel","Textura indisponivel: "+filename,ex);return 0;}
     }
+    private void bindForestShadow(int program){
+        boolean available=forestShadows!=null && forestShadows.ready();
+        f1(program,"uShadowEnabled",available?1f:0f);
+        texture(7,available?forestShadows.texture():0);
+        i1(program,"uShadowMap",7);
+        if(available)GLES30.glUniformMatrix4fv(loc(program,"uLightVP"),1,false,
+                                               forestShadows.lightVP,0);
+    }
     private int loadTexture(){
         int[] t=new int[1];GLES30.glGenTextures(1,t,0);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,t[0]);
@@ -415,7 +446,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     }
     private void makeDust(){
         Random r=new Random(62519);
-        dustCount=185;
+        dustCount=222; // VBO com capacidade para +20% de poeira nas searas.
         FloatBuffer seeds=ByteBuffer.allocateDirect(dustCount*3*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
         for(int i=0;i<dustCount;i++){
             seeds.put(r.nextFloat()*2-1).put(r.nextFloat()).put(r.nextFloat()*2-1);
