@@ -92,43 +92,48 @@ final class CloudModel {
         n=(n^(n>>>13))*1274126177;
         return ((n^(n>>>16))&0x7fffffff)/2147483648f;
     }
-    /** Coordenadas estaveis no mundo, 3 GLB estaticos, aparecimento gradual sem trocar mesh. */
-    void draw(int program,float x,float eyeY,float z,float dx,float dz,float time){
+    /** Grade estatica: nunca remove nuvens pelo pitch/direcao da camera.
+     *  A visibilidade muda continuamente com a distancia, evitando piscadas.
+     *  O proprio clipping OpenGL cuida do campo de visao. */
+    void draw(int program,float x,float eyeY,float z,float dx,float dz,float time,float visibility){
         GLES30.glEnable(GLES30.GL_BLEND);
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA,GLES30.GL_ONE_MINUS_SRC_ALPHA);
-        GLES30.glDepthMask(true);
-        int location=GLES30.glGetUniformLocation(program,"uCloudPosScale");
+        GLES30.glDepthMask(false);
+        int loc=GLES30.glGetUniformLocation(program,"uCloudPosScale");
         int center=GLES30.glGetUniformLocation(program,"uCloudCenter");
         int alpha=GLES30.glGetUniformLocation(program,"uAlpha");
-        float fade=Math.min(1f,Math.max(0f,time*.8f));
-        // Formacao assegurada no horizonte diante da orientacao inicial, acima das montanhas.
-        if(visible(220f,-590f,x,z,dx,dz,1000f))
-            drawOne(meshes[1],location,center,alpha,220f,230f,-590f,75f,.90f*fade); // solpixel-v06: 3x
+        float intro=fade(0f,2.8f,time)*visibility;
+        // Nuvem de referencia fixa: o fade depende da distancia, nao da direcao.
+        float fixedDist=(float)Math.hypot(220f-x,-590f-z);
+        float fixedOpacity=.90f*intro*fade(165f,295f,fixedDist)*
+                                 (1f-fade(690f,960f,fixedDist));
+        if(fixedOpacity>.015f)
+            drawOne(meshes[1],loc,center,alpha,220f,230f,-590f,75f,fixedOpacity);
         final int cell=245;
         int cx=(int)Math.floor(x/cell),cz=(int)Math.floor(z/cell);
-        int rendered=0;
-        for(int radius=0;radius<=3 && rendered<9;radius++){
-            for(int j=-radius;j<=radius && rendered<9;j++)for(int i=-radius;i<=radius && rendered<9;i++){
-                if(Math.max(Math.abs(i),Math.abs(j))!=radius)continue;
-                int gx=cx+i,gz=cz+j;
-                if(hash(gx*11+7,gz*19-5)>.84f)continue;
-                float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*65f;
-                float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*65f;
-                if(!visible(px,pz,x,z,dx,dz,1100f))continue;
-                int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
-                Mesh mesh=meshes[type];
-                float scale=54f+hash(gx*29,gz*17)*27f; // 3x tamanho
-                float height=214f+hash(gx*37,gz*41)*63f;
-                drawOne(mesh,location,center,alpha,px,height,pz,scale,.90f*fade);
-                rendered++;
-            }
+        for(int j=-4;j<=4;j++)for(int i=-4;i<=4;i++){
+            int gx=cx+i,gz=cz+j;
+            if(hash(gx*11+7,gz*19-5)>.84f)continue;
+            float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*65f;
+            float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*65f;
+            float dist=(float)Math.hypot(px-x,pz-z);
+            float near=fade(145f,290f,dist);
+            float far=1f-fade(710f,990f,dist);
+            float opacity=.90f*intro*near*far;
+            if(opacity<.015f)continue;
+            int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
+            Mesh mesh=meshes[type];
+            float scale=54f+hash(gx*29,gz*17)*27f;
+            float height=214f+hash(gx*37,gz*41)*63f;
+            drawOne(mesh,loc,center,alpha,px,height,pz,scale,opacity);
         }
         GLES30.glBindVertexArray(0);
+        GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
     }
-    private static boolean visible(float px,float pz,float x,float z,float dx,float dz,float maxDist){
-        float vx=px-x,vz=pz-z,dist=(float)Math.hypot(vx,vz);
-        return dist>145f && dist<maxDist && vx*dx+vz*dz > dist*.05f;
+    private static float fade(float start,float end,float v){
+        float t=Math.max(0f,Math.min(1f,(v-start)/(end-start)));
+        return t*t*(3f-2f*t);
     }
     private static void drawOne(Mesh mesh,int loc,int center,int alpha,float px,float py,float pz,float scale,float opacity){
         GLES30.glUniform4f(loc,px,py,pz,scale);

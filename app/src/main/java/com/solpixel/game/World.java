@@ -131,10 +131,10 @@ public final class World {
         Mesh objects,shadows;
         Tree[] trees;
         final HashMap<Long,Tree[]> collisionCells=new HashMap<>();
-        float[] broadleafInstances,pineInstances;
-        Decoration(Mesh o,Mesh s,Tree[] trees,float[] broad,float[] pine){
+        float[] broadleafInstances,pineInstances,grassInstances;
+        Decoration(Mesh o,Mesh s,Tree[] trees,float[] broad,float[] pine,float[] grass){
             this.objects=o;this.shadows=s;this.trees=trees;
-            broadleafInstances=broad;pineInstances=pine;
+            broadleafInstances=broad;pineInstances=pine;grassInstances=grass;
             // Grade espacial construida no worker: colisao O(arvores proximas).
             HashMap<Long,ArrayList<Tree>> cells=new HashMap<>();
             for(Tree t:trees){
@@ -213,8 +213,47 @@ public final class World {
                 float size=.5f+n01(rx*29,rz*37)*1.25f,py=height(px,pz);
                 box(v,ids,px-size,py-.18f,pz-size*.8f,px+size,py+size*.68f,pz+size*.8f,3);
             }
+        // Grama em manchas por noise: campos abertos com tufos densos,
+        // florestas fechadas com raras graminhas pequenas. Coordenadas globais.
+        FloatList grass=new FloatList();
+        final float grassRadius=Math.min(range,Math.max(150f,radius*.30f+98f));
+        final float grassStep=2.85f;
+        int a=(int)Math.floor((cx-grassRadius)/grassStep)-1;
+        int b=(int)Math.ceil((cx+grassRadius)/grassStep)+1;
+        int c=(int)Math.floor((cz-grassRadius)/grassStep)-1;
+        int d=(int)Math.ceil((cz+grassRadius)/grassStep)+1;
+        for(int gz=c;gz<=d;gz++)for(int gx=a;gx<=b;gx++){
+            float px=(gx+.5f)*grassStep+hash(gx*13+19,gz*17-37)*grassStep*.39f;
+            float pz=(gz+.5f)*grassStep+hash(gx*37-11,gz*29+61)*grassStep*.39f;
+            float dx=px-cx,dz=pz-cz;
+            if(dx*dx+dz*dz>grassRadius*grassRadius)continue;
+            float forest=forestDensity(px,pz);
+            float open=1f-forest;
+            float large=smooth(-.45f,.13f,noise(px*.021f+151,pz*.021f-79));
+            float small=.62f+.38f*smooth(-.30f,.40f,noise(px*.075f-63,pz*.075f+44));
+            float probability=(.07f+.82f*open)*large*small;
+            if(forest>.62f)probability*=.065f;
+            else if(forest>.39f)probability*=.32f;
+            if(n01(gx*31+91,gz*47-59)>probability)continue;
+            float slope=Math.abs(height(px+1f,pz)-height(px-1f,pz))+
+                        Math.abs(height(px,pz+1f)-height(px,pz-1f));
+            if(slope>2.4f)continue;
+            float variant=n01(gx*41-7,gz*23+51)*6f;
+            int species=Math.min(5,(int)variant);
+            // Apenas grama pequena/rala nas sombras profundas de um bosque.
+            if(forest>.62f && species!=2 && species!=3 && species!=4)continue;
+            float size=.68f+n01(gx*73+11,gz*61+7)*.67f;
+            if(species==0)size*=1.25f;
+            if(species==2)size*=.72f;
+            float angle=n01(gx*17-19,gz*13+5)*6.2831853f;
+            float variation=n01(gx*19+37,gz*11-23);
+            float py=height(px,pz)-.035f*size;
+            grass.add(px);grass.add(py);grass.add(pz);grass.add(size);
+            grass.add((float)Math.cos(angle));grass.add((float)Math.sin(angle));
+            grass.add(species);grass.add(variation);
+        }
         return new Decoration(new Mesh(v.array(),ids.array()),new Mesh(shadows.array(),shadowIds.array()),
-               trees.toArray(new Tree[0]),broad.array(),pine.array());
+               trees.toArray(new Tree[0]),broad.array(),pine.array(),grass.array());
     }
     static long cellKey(int x,int z){return ((long)x<<32)^(z&0xffffffffL);}
     /** Resolve apenas os 6 troncos mais proximos, com grade espacial 14m. */

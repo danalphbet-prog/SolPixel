@@ -28,9 +28,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private Target scene,bloomA,bloomB;
     private MeshGpu ground,objects,shadows;
     private TreeModel broadleaf,pines;
+    private GrassModel grasses;
+    private int grassP,terrainDirt,terrainMiddle,terrainGrass;
+    private boolean hasTerrainTextures=false;
+    private final float[] grassTint={1f,1f,1f};
     private World.Decoration activeDecoration;
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
+    private float cloudVisibility=1f;
     private int appliedWorldRevision=-1;
     private int pendingWorldRevision=0; // solpixel-v05: regenerate after forest settings change
     private MeshGpu nextGround,nextObjects,nextShadows;
@@ -84,10 +89,17 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         finalP=program(Shaders.FULL_V,Shaders.FINAL_F);
         dustP=program(Shaders.DUST_V,Shaders.DUST_F);
         treeP=program(Shaders.TREE_V,Shaders.TREE_F);
+        grassP=program(Shaders.GRASS_V,Shaders.GRASS_F);
         cloudP=program(Shaders.CLOUD_V,Shaders.CLOUD_F);
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
+        terrainDirt=loadOptionalGround("terrain_dirt.png");
+        terrainMiddle=loadOptionalGround("terrain_mixed.png");
+        terrainGrass=loadOptionalGround("terrain_grass.png");
+        hasTerrainTextures=(terrainDirt!=0 && terrainMiddle!=0 && terrainGrass!=0);
         cloudMask=loadImageTexture("cloud_mask.png");
+        try{grasses=new GrassModel(context);}
+        catch(Exception ex){Log.e("SolPixel","Falha ao iniciar grama",ex);}
         try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
@@ -113,6 +125,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
+        GrassDayCycle.color(time,grassTint);
+        float targetClouds=game.cloudsOn?1f:0f;
+        cloudVisibility+=(targetClouds-cloudVisibility)*(1f-(float)Math.exp(-dt*2.7f));
         // Worker unico gera terreno SEM bloquear o frame. Os 3 buffers da GPU
         // sao carregados em quadros diferentes para evitar microtravamentos.
         BuildResult ready=completedWorld;
@@ -246,6 +261,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0);
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,groundTexture);
         i1(meshP,"uGround",0);
+        texture(2,hasTerrainTextures?terrainDirt:groundTexture);
+        texture(3,hasTerrainTextures?terrainMiddle:groundTexture);
+        texture(4,hasTerrainTextures?terrainGrass:groundTexture);
+        i1(meshP,"uTerrainDirt",2);
+        i1(meshP,"uTerrainMiddle",3);
+        i1(meshP,"uTerrainGrass",4);
+        f1(meshP,"uHasTerrainTextures",hasTerrainTextures?1f:0f);
+        v3(meshP,"uGrassDayTint",grassTint);
         f1(meshP,"uDrawDistance",game.renderDistance);
         if(ground!=null)ground.draw();
         GLES30.glEnable(GLES30.GL_BLEND);
@@ -265,13 +288,22 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
             pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
+        // Cartoes cruzados com alpha cutout: sem transparencia ordenada, sem colisao.
+        if(grasses!=null && activeDecoration!=null){
+            GLES30.glDisable(GLES30.GL_BLEND);
+            GLES30.glDepthMask(true);
+            GLES30.glUseProgram(grassP);
+            GLES30.glUniformMatrix4fv(loc(grassP,"uMvp"),1,false,vp,0);
+            GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
+            grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f);
+        }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
-        if(game.cloudsOn && clouds!=null){
+        if(clouds!=null && cloudVisibility>.006f){
             GLES30.glUseProgram(cloudP);
             GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
             v3(cloudP,"uSun",SUN);
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
-            clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time);
+            clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
         }
         // Poeira iluminada flutuante, sprites de ponto com textura radial.
         GLES30.glUseProgram(dustP);
@@ -325,6 +357,18 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(finalP,"uSunVisible",0f); // solpixel-v05: nenhum halo/god-ray artificial no ceu
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
+    }
+    /** Texturas reais do solo: espelhamento evita emendas de tiling evidentes. */
+    private int loadOptionalGround(String filename){
+        try(InputStream stream=context.getAssets().open(filename)){
+            int id=loadImageTexture(filename);
+            if(id!=0){
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,id);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_MIRRORED_REPEAT);
+                GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_MIRRORED_REPEAT);
+            }
+            return id;
+        }catch(Exception ignored){return 0;}
     }
     private int loadImageTexture(String filename){
         try(InputStream input=context.getAssets().open(filename)){

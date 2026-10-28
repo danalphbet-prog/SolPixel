@@ -16,11 +16,15 @@ final class Shaders {
         flat out int vMat;
         out float vForest;
         out float vDist;
+        out float vPatch;
+        float hashGround(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         void main(){
             gl_Position=uMvp*vec4(aPos,1.0);
             vPos=aPos;vNormal=aNormal;vUv=aUv;
             vMat=int(floor(aMaterial+0.001));
             vForest=fract(aMaterial);
+            vPatch=mix(hashGround(floor(aPos.xz*.067)),
+                       hashGround(floor(aPos.xz*.137+vec2(13.7,29.1))),.35);
             vDist=distance(aPos,uEye);
         }
         """;
@@ -33,7 +37,11 @@ final class Shaders {
         flat in int vMat;
         in float vForest;
         in float vDist;
+        in float vPatch;
         uniform sampler2D uGround;
+        uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
+        uniform float uHasTerrainTextures;
+        uniform vec3 uGrassDayTint;
         uniform vec3 uSun;
         uniform float uDrawDistance;
         out vec4 outColor;
@@ -46,10 +54,26 @@ final class Shaders {
             float grid=hash(floor(vPos.xz*2.5)+floor(vPos.y*2.5));
             vec3 albedo;
             if(vMat==0) {
-                albedo=texture(uGround,vUv).rgb;
-                // Pequenas variacoes deterministicas na vegetacao do solo.
-                float grass=hash(floor(vPos.xz*1.5));
-                albedo*=vec3(.95+grass*.12,.96+grass*.11,.96+grass*.035);
+                // Splat-mapping procedural por densidade de floresta e manchas suaves.
+                // A textura antiga permanece como detalhe ate as 3 texturas chegarem.
+                float lush=clamp((1.0-vForest)*.99+(vPatch-.5)*.31-.08,0.0,1.0);
+                float groundDetail=dot(texture(uGround,vUv).rgb,vec3(.33333));
+                vec3 soil=vec3(.32,.26,.17)*(.75+groundDetail*.48);
+                vec3 mixed=vec3(.25,.34,.145)*(.79+groundDetail*.43);
+                vec3 meadow=vec3(.15,.37,.108)*(.77+groundDetail*.49);
+                soil*=mix(.84,1.14,vPatch);
+                mixed*=mix(.89,1.14,vPatch);
+                meadow*=mix(.82,1.19,vPatch);
+                if(uHasTerrainTextures>.5){
+                    soil=texture(uTerrainDirt,vUv).rgb;
+                    mixed=texture(uTerrainMiddle,vUv).rgb;
+                    meadow=texture(uTerrainGrass,vUv).rgb;
+                }
+                float mid=smoothstep(.10,.48,lush);
+                float green=smoothstep(.43,.86,lush);
+                albedo=mix(mix(soil,mixed,mid),meadow,green);
+                // Terra praticamente neutra; grama acompanha a temperatura do dia.
+                albedo*=mix(vec3(1.0),uGrassDayTint,smoothstep(.16,.79,lush));
             } else if(vMat==1){
                 albedo=vec3(.35,.23,.15);
                 albedo*=.8+.28*hash(floor(vPos.xz*9.0)+floor(vPos.y*7.0));
@@ -293,6 +317,55 @@ final class Shaders {
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
+        }
+        """;
+
+    static final String GRASS_V = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec3 aPos;
+        layout(location=1) in vec2 aUv;
+        layout(location=2) in vec4 aInstancePosSize;
+        layout(location=3) in vec4 aInstanceExtra;
+        uniform mat4 uMvp;
+        uniform vec3 uEye;
+        out vec2 vUv;
+        out float vDist,vShade;
+        void main(){
+            float size=aInstancePosSize.w;
+            vec3 p=aPos*size;
+            vec3 rotated=vec3(p.x*aInstanceExtra.x-p.z*aInstanceExtra.y,
+                              p.y,p.x*aInstanceExtra.y+p.z*aInstanceExtra.x);
+            vec3 world=aInstancePosSize.xyz+rotated;
+            gl_Position=uMvp*vec4(world,1.0);
+            float n=floor(aInstanceExtra.z+.5);
+            float col=mod(n,3.0),row=floor(n/3.0);
+            vUv=(vec2(col,row)*80.0+vec2(8.0)+aUv*64.0)/256.0;
+            vDist=distance(world,uEye);
+            vShade=aInstanceExtra.w;
+        }
+        """;
+    static final String GRASS_F = """
+        #version 300 es
+        precision highp float;
+        in vec2 vUv;
+        in float vDist,vShade;
+        uniform sampler2D uGrassAtlas;
+        uniform vec3 uGrassTint;
+        uniform float uGrassLimit;
+        out vec4 outColor;
+        void main(){
+            vec4 tex=texture(uGrassAtlas,vUv);
+            if(tex.a<.48)discard;
+            // Dissolve gradual na distancia, sem transparencia ordenada.
+            float fade=1.0-smoothstep(uGrassLimit*.72,uGrassLimit,vDist);
+            float px=mod(floor(gl_FragCoord.x),4.0),py=mod(floor(gl_FragCoord.y),4.0);
+            float threshold=(px+py*4.0+.5)/16.0;
+            if(fade<threshold)discard;
+            float highlight=smoothstep(.20,.71,tex.r);
+            vec3 color=vec3(.14,.365,.105)*uGrassTint;
+            color*=mix(.67,1.20,highlight)*mix(.80,1.20,vShade);
+            outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;
 
