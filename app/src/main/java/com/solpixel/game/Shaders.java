@@ -40,10 +40,10 @@ final class Shaders {
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
         void main(){
             vec3 n=normalize(vNormal);
-            float light=clamp(dot(n,uSun)*.85+.26,.10,1.0);
-            // Tons quantizados: iluminacao e sombra com bordas pixeladas.
+            float ndotl=max(0.0,dot(n,normalize(uSun)));
+            vec3 ambient=mix(vec3(.19,.17,.15),vec3(.40,.48,.57),
+                             clamp(n.y*.5+.5,0.0,1.0));
             float grid=hash(floor(vPos.xz*2.5)+floor(vPos.y*2.5));
-            light=floor((light+grid*.075)*5.0)/5.0;
             vec3 albedo;
             if(vMat==0) {
                 albedo=texture(uGround,vUv).rgb;
@@ -64,15 +64,13 @@ final class Shaders {
                 float alpha= .34*(.8+.2*step(.5,grid));
                 outColor=vec4(vec3(.07,.11,.08),alpha); return;
             }
-            vec3 warm=vec3(1.08,1.02,.91);
-            vec3 color=albedo*(vec3(.37,.43,.47)+warm*light*.82);
-            // Escurecimento sob o dossel sem um pesado passe de shadow mapping.
-            color*=1.0-clamp(vForest,0.0,1.0)*.49;
-            float fog=smoothstep(uDrawDistance*.46,uDrawDistance*.995,vDist)*.72; // solpixel-v06: horizonte
-            color=mix(color,vec3(.70,.81,.90),fog);
-            // Paleta de 5 bits por canal + dithering ordenado: retro PS1.
+            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84;
+            vec3 color=albedo*(ambient+direct);
+            color*=1.0-clamp(vForest,0.0,1.0)*.30;
+            float fog=smoothstep(uDrawDistance*.53,uDrawDistance*1.05,vDist)*.68;
+            color=mix(color,vec3(.77,.89,.99),fog);
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
-            color=floor(clamp(color,0.0,1.0)*31.0+bayer)/31.0;
+            color=floor(clamp(color,0.0,1.0)*63.0+bayer*.45)/63.0;
             outColor=vec4(color,1.0);
         }
         """;
@@ -101,8 +99,8 @@ final class Shaders {
             vec2 q=(vUv*2.0-1.0)*vec2(uAspect,1.0)*uFov;
             vec3 dir=normalize(uForward+q.x*uRight+q.y*uUp);
             float altitude=smoothstep(-.22,.85,dir.y);
-            vec3 horizon=vec3(.69,.85,.98);
-            vec3 zenith=vec3(.18,.45,.78);
+            vec3 horizon=vec3(.82,.92,1.0);
+            vec3 zenith=vec3(.32,.59,.89);
             outColor=vec4(mix(horizon,zenith,altitude),1.0);
         }
         """;
@@ -236,11 +234,17 @@ final class Shaders {
         out vec3 vWorld;
         out float vGouraud;
         void main(){
+            // Inclinar o tronco no eixo X local antes de aplicar o yaw da arvore.
+            float cs=cos(aRotation.w),sn=sin(aRotation.w);
             vec3 p=aPosition*aLocation.w;
-            vec3 rotated=vec3(p.x*aRotation.x-p.z*aRotation.y,p.y,p.x*aRotation.y+p.z*aRotation.x);
+            vec3 tilted=vec3(p.x,p.y*cs-p.z*sn,p.y*sn+p.z*cs);
+            vec3 rotated=vec3(tilted.x*aRotation.x-tilted.z*aRotation.y,
+                              tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
             vec3 world=aLocation.xyz+rotated;
-            vec3 n=aNormal;
-            vNormal=normalize(vec3(n.x*aRotation.x-n.z*aRotation.y,n.y,n.x*aRotation.y+n.z*aRotation.x));
+            vec3 n=vec3(aNormal.x,aNormal.y*cs-aNormal.z*sn,
+                        aNormal.y*sn+aNormal.z*cs);
+            vNormal=normalize(vec3(n.x*aRotation.x-n.z*aRotation.y,n.y,
+                                   n.x*aRotation.y+n.z*aRotation.x));
             vWorld=world;vUv=aUv;vForest=aRotation.z;
             vGouraud=max(0.0,dot(vNormal,normalize(uSun)));
             vDist=distance(world,uEye);
@@ -264,13 +268,16 @@ final class Shaders {
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
             float nl=vGouraud;
-            float sunlight=floor((nl*.83+.17+hash(floor(vWorld.xz*2.0))*.07)*6.)/6.;
-            float canopy=1.-vForest*(uLeaf>.5?.44:.51);
-            vec3 color=tex.rgb*canopy*(vec3(.46,.49,.49)+sunlight*vec3(.79,.74,.61));
-            float fog=smoothstep(uDrawDistance*.46,uDrawDistance*.995,vDist)*.72;
-            color=mix(color,vec3(.70,.81,.90),fog);
+            float upward=clamp(normalize(vNormal).y*.5+.5,0.0,1.0);
+            vec3 ambient=mix(vec3(.22,.20,.17),vec3(.43,.50,.57),upward);
+            float sunDiffuse=clamp(nl+(uLeaf>.5?.12:0.0),0.0,1.0);
+            vec3 sunlight=vec3(1.08,1.01,.89)*sunDiffuse*.82;
+            float canopy=1.-vForest*(uLeaf>.5?.28:.35);
+            vec3 color=tex.rgb*canopy*(ambient+sunlight);
+            float fog=smoothstep(uDrawDistance*.53,uDrawDistance*1.05,vDist)*.68;
+            color=mix(color,vec3(.77,.89,.99),fog);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
-            color=floor(clamp(color,0.0,1.0)*31.0+dither)/31.0;
+            color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
         }
         """;

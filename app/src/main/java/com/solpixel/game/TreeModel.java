@@ -108,8 +108,7 @@ final class TreeModel {
         for(int i=0;i<count;i++)for(int k=0;k<components;k++)arr[i*components+k]=bin.getFloat(offset+i*stride+k*4);
         return arr;
     }
-    // SolPixel v0.6: GLB integral APENAS no primeiro anel visual.
-    // O restante do horizonte e desenhado pelo TreeLodModel (proxy 3D low-poly).
+    // GLB original em toda a distancia; apenas culling e mipmaps de textura.
     private float[] visibilitySource=null,visibleInstances=null;
     private float viewX=Float.MAX_VALUE,viewZ=Float.MAX_VALUE,dirX=2f,dirZ=2f,visibleDistance=-1f;
     void drawCulled(int program,float[] instances,float eyeX,float eyeZ,float forwardX,float forwardZ,float maxDistance){
@@ -123,8 +122,8 @@ final class TreeModel {
             for(int off=0;off<instances.length;off+=8){
                 float px=instances[off],pz=instances[off+2];
                 float vx=px-eyeX,vz=pz-eyeZ,dist=(float)Math.hypot(vx,vz);
-                if(dist>Math.min(maxDistance,TreeLodModel.switchDistance(px,pz)))continue;
-                if(dist>20f && vx*forwardX+vz*forwardZ<-dist*.35f)continue;
+                if(dist>maxDistance)continue;
+                if(dist>30f && vx*forwardX+vz*forwardZ<-dist*.12f)continue;
                 System.arraycopy(instances,off,selected,n,8);n+=8;
             }
             visibleInstances=java.util.Arrays.copyOf(selected,n);

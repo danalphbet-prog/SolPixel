@@ -43,23 +43,22 @@ public final class World {
         float t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);
     }
     static float height(float x,float z){
-        // Terreno de frequencias baixas, com topo arredondado em vez de "agulhas".
-        float wx=x+noise(x*.0025f+7,z*.0025f+9)*43f;
-        float wz=z+noise(x*.0025f-8,z*.0025f+27)*43f;
-        float continent=noise(wx*.0020f+58,wz*.0020f-43);
-        float mountain=smooth(.02f,.46f,continent);
-        float plains=1f-smooth(-.39f,-.07f,continent);
-        float hills=noise(wx*.007f,wz*.007f)*7.5f + noise(wx*.022f+31,wz*.022f-29)*2.1f;
-        // Cumes largos como colinas gigantes: somente frequencias suaves.
-        // smooth() achata naturalmente a derivada perto do topo, sem picos agudos.
-        float dome=.5f+.5f*noise(wx*.0032f+40,wz*.0032f+33);
-        dome=smooth(.11f,.74f,dome);
-        float mountainTop=mountain*(15f+83f*dome);
-        float plain=(noise(wx*.012f-41,wz*.012f+19)*.24f);
-        float result=(1f-plains)*(hills+mountainTop)+plains*plain;
-        // Saturacao suave dos pontos altos: substitui cumes estreitos por domos
-        // arredondados, preservando encostas/vales e sem cortes horizontais.
-        if(result>48f)result=48f+60f*(1f-(float)Math.exp(-(result-48f)/60f));
+        // Planicies, colinas baixas/altas e montanhas com cumes largos.
+        float wx=x+noise(x*.0025f+7,z*.0025f+9)*39f;
+        float wz=z+noise(x*.0025f-8,z*.0025f+27)*39f;
+        float region=noise(wx*.00175f+58,wz*.00175f-43);
+        float mountain=smooth(-.13f,.31f,region);
+        float plains=1f-smooth(-.56f,-.28f,region);
+        float lowHills=noise(wx*.008f,wz*.008f)*6.4f+
+                       noise(wx*.019f+31,wz*.019f-29)*1.8f;
+        float tallHillsMask=smooth(-.31f,.13f,noise(wx*.0039f-27,wz*.0039f+58));
+        float tallHillsShape=smooth(.13f,.82f,.5f+.5f*noise(wx*.0051f+76,wz*.0051f-43));
+        float tallHills=tallHillsMask*(4f+34f*tallHillsShape);
+        float dome=smooth(.10f,.84f,.5f+.5f*noise(wx*.00255f+40,wz*.00255f+33));
+        float mountainTop=mountain*(16f+106f*dome);
+        float plain=noise(wx*.009f-41,wz*.009f+19)*.22f;
+        float result=(1f-plains)*(lowHills+tallHills+mountainTop)+plains*plain;
+        if(result>65f)result=65f+74f*(1f-(float)Math.exp(-(result-65f)/74f));
         float spawn=1f-smooth(35,88,(float)Math.hypot(x,z));
         return result*(1-spawn)+.15f*spawn;
     }
@@ -77,8 +76,11 @@ public final class World {
         float mass=smooth(-.42f,.06f,macro);
         // Subgrupos aumentam o fechamento da copa em vez de criar pontos uniformes.
         float subgroup=smooth(-.62f,.14f,noise(wx*.018f+29,wz*.018f-31));
-        float openings=smooth(-.50f,-.24f,noise(wx*.009f+93,wz*.009f+21));
-        float coverage=mass*(.70f+.30f*subgroup)*openings;
+        // Clareiras grandes e medias em florestas densas.
+        float openings=smooth(-.42f,-.18f,noise(wx*.009f+93,wz*.009f+21));
+        float wideClear=1f-smooth(.29f,.52f,noise(wx*.0044f-63,wz*.0044f+115));
+        float smallClear=1f-.90f*smooth(.34f,.58f,noise(wx*.018f+61,wz*.018f-34));
+        float coverage=mass*(.70f+.30f*subgroup)*openings*wideClear*smallClear;
         float h=height(x,z);
         float slope=Math.abs(height(x+3,z)-height(x-3,z))+
                     Math.abs(height(x,z+3)-height(x,z-3));
@@ -153,7 +155,7 @@ public final class World {
         ArrayList<Tree> trees=new ArrayList<>();
         // O limite acompanha a distancia configurada, sem teto antigo de 236m.
         float range=Math.max(48f,radius-12f);
-        // Alta densidade nas proximidades; a floresta so perde amostras no LOD distante.
+        // Geracao global independente da distancia ao jogador.
         final float spacing=4.55f;
         int minX=(int)Math.floor((cx-range)/spacing)-1,maxX=(int)Math.ceil((cx+range)/spacing)+1;
         int minZ=(int)Math.floor((cz-range)/spacing)-1,maxZ=(int)Math.ceil((cz+range)/spacing)+1;
@@ -164,13 +166,7 @@ public final class World {
             float dx=px-cx,dz=pz-cz,dist2=dx*dx+dz*dz;
             if(Math.abs(dx)>range||Math.abs(dz)>range||dist2>range*range)continue;
             float distance=(float)Math.sqrt(dist2);
-            // Campo de detalhe determinado pela distancia, sem numero fixo por grupo.
-            // Evita gerar dezenas de milhares de copias GLB inutilizadas a 1km.
-            if(distance>360f){
-                if(Math.floorMod(ix,3)!=0||Math.floorMod(iz,3)!=0)continue;
-            } else if(distance>175f){
-                if(Math.floorMod(ix,2)!=0||Math.floorMod(iz,2)!=0)continue;
-            }
+            // Nao afinar as arvores conforme o player se aproxima.
             float density=forestDensity(px,pz);
             if(density<.11f)continue;
             float core=smooth(.16f,.74f,density);
@@ -184,8 +180,15 @@ public final class World {
             float base=(kind==PINE?.38f:.77f);
             float size=base*(kind==PINE?1.20f:1f)*randomScale;
             float py=height(px,pz);
-            float radiusTrunk=(kind==PINE?1.60f:.52f)*size;
+            float radiusTrunk=(kind==PINE?1.60f:.52f)*size+.18f*size;
             float rotation=n01(ix*13+4,iz*13-2)*6.283185f;
+            // 50% inclinadas: angulo de 0 a 18 graus, sinal e eixo aleatorios.
+            float tilt=0f;
+            if(n01(ix*41-3,iz*53+17)<.50f){
+                float degrees=18f*n01(ix*67+11,iz*71-23);
+                float sign=n01(ix*31-91,iz*47+39)<.50f?-1f:1f;
+                tilt=sign*degrees*.01745329252f;
+            }
             float modelHeight=(kind==PINE?53f:13.3f);
             float groundOffset=2.6f*size-.03f*modelHeight*size;
             Tree tree=new Tree(kind,px,py+groundOffset,pz,size,rotation,density,radiusTrunk);
@@ -195,7 +198,7 @@ public final class World {
                 (kind==PINE?4f:2.7f)*size);
             FloatList dest=kind==PINE?pine:broad;
             dest.add(tree.x);dest.add(tree.y);dest.add(tree.z);dest.add(tree.scale);
-            dest.add(tree.cos);dest.add(tree.sin);dest.add(density);dest.add(0);
+            dest.add(tree.cos);dest.add(tree.sin);dest.add(density);dest.add(tilt);
         }
         // Pedras nao colidem, dispersas em locais abertos.
         final float rockGrid=39f;

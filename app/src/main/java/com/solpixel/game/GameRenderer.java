@@ -28,8 +28,6 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private Target scene,bloomA,bloomB;
     private MeshGpu ground,objects,shadows;
     private TreeModel broadleaf,pines;
-    // solpixel-v06: segundo LOD 3D (arvores distantes com textura procedural).
-    private TreeLodModel broadleafLod,pinesLod;
     private World.Decoration activeDecoration;
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
@@ -62,6 +60,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private float lookDX=0,lookDY=0;
     private float x=0,z=0,yaw=.45f,pitch=.10f,airHeight=0,vy=0,time=0,step=0;
     private float moveVelocityX=0,moveVelocityZ=0,lookRemainingX=0,lookRemainingY=0;
+    private float smoothedEyeY=Float.NaN;
     private long lastFrame;
     GameRenderer(GameActivity game){this.context=game;this.game=game;}
 
@@ -88,10 +87,6 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
         cloudMask=loadImageTexture("cloud_mask.png");
-        try{
-            broadleafLod=new TreeLodModel(false);
-            pinesLod=new TreeLodModel(true);
-        }catch(Exception ex){Log.e("SolPixel","Falha iniciando LOD 3D das arvores",ex);}
         try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
@@ -154,11 +149,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 catch(Throwable e){Log.e("SolPixel","Terreno async",e);buildingWorld=false;}
             });
         }
-        float eyeY=World.height(x,z)+1.72f+airHeight;
-        if(game.state==1 && airHeight<=.005f){
-            eyeY+=(float)Math.sin(step*10.5f)*.025f;
-        }
-        eyeY=Math.max(eyeY,World.height(x,z)+1.6f);
+        // Camera vertical amortecida, sem head-bob gerador de tremor.
+        float surfaceY=World.height(x,z);
+        float targetEyeY=surfaceY+1.72f+airHeight;
+        if(Float.isNaN(smoothedEyeY)||Math.abs(smoothedEyeY-targetEyeY)>19f)
+            smoothedEyeY=targetEyeY;
+        smoothedEyeY+=(targetEyeY-smoothedEyeY)*(1f-(float)Math.exp(-dt*13f));
+        float eyeY=Math.max(smoothedEyeY,surfaceY+1.54f);
         float cosP=(float)Math.cos(pitch),sinP=(float)Math.sin(pitch),
               cosY=(float)Math.cos(yaw),sinY=(float)Math.sin(yaw);
         forward[0]=sinY*cosP;forward[1]=sinP;forward[2]=-cosY*cosP;
@@ -176,6 +173,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             x=0;z=0;pitch=.08f;yaw=.48f;airHeight=0;vy=0;step=0;
             jumpPressed=false;stickX=stickY=0;resetRequested=false;
             moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
+            smoothedEyeY=Float.NaN;
             consumeLook();
         }
         float[] drag=consumeLook();
@@ -265,15 +263,6 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",game.renderDistance);
             broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
             pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
-        }
-        if(activeDecoration!=null && broadleafLod!=null && pinesLod!=null){
-            GLES30.glUseProgram(treeP);
-            GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
-            GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
-            v3(treeP,"uSun",SUN);
-            f1(treeP,"uDrawDistance",game.renderDistance);
-            broadleafLod.draw(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
-            pinesLod.draw(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(game.cloudsOn && clouds!=null){
