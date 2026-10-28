@@ -2,10 +2,11 @@ package com.solpixel.game;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 
 /** Relevo e biomas deterministas. Coordenadas globais estaveis em todos os chunks. */
 public final class World {
-    static final int SAMPLES = 105;       // 105x105: custo reduzido; horizonte via skybox
+    static final int SAMPLES = 129; // solpixel-v06       // 129x129: terreno distante, horizonte azul
     static final float STEP = 3f; // compatibilidade com versoes anteriores
     private static final float SUN_X=.53f, SUN_Z=-.47f;
     static final int BROADLEAF=0, PINE=1;
@@ -65,28 +66,35 @@ public final class World {
     /** Densidade multi-escala: manchas extensas, microclareiras e bordas orgânicas.
      *  Nao existe um contador de arvores por cluster: cada ponto e aceito pela mascara. */
     static float forestDensity(float x,float z){
-        // Escala das manchas regula biomas/coalescencia sem colocar limite de arvores.
-        float scale=CLUSTER_SCALE;
+        // Campos correlacionados, sem limite de arvores por cluster.
+        // Noise continental = macicos extensos; ruido secundario = clareiras e bordas.
+        float scale=Math.max(.65f,CLUSTER_SCALE);
         float bx=x/scale,bz=z/scale;
-        float wx=bx+noise(bx*.0029f+31,bz*.0029f-22)*66f;
-        float wz=bz+noise(bx*.0029f-71,bz*.0029f+17)*66f;
-        float region=noise(wx*.0048f+19,wz*.0048f-83)*.78f +
-                     noise(wx*.014f-6,wz*.014f+9)*.22f;
-        float canopy=smooth(-.32f,.15f,region);
-        float smaller=noise(wx*.025f+29,wz*.025f-31);
-        canopy*=.62f+.38f*smooth(-.43f,.28f,smaller);
-        // Vazios amplos que surgem mesmo no interior da floresta.
-        float gaps=smooth(-.44f,-.17f,noise(wx*.011f+93,wz*.011f+21));
+        float wx=bx+noise(bx*.0021f+31,bz*.0021f-22)*94f;
+        float wz=bz+noise(bx*.0021f-71,bz*.0021f+17)*94f;
+        float macro=noise(wx*.00325f+19,wz*.00325f-83)*.82f+
+                    noise(wx*.009f-6,wz*.009f+9)*.18f;
+        float mass=smooth(-.42f,.06f,macro);
+        // Subgrupos aumentam o fechamento da copa em vez de criar pontos uniformes.
+        float subgroup=smooth(-.62f,.14f,noise(wx*.018f+29,wz*.018f-31));
+        float openings=smooth(-.50f,-.24f,noise(wx*.009f+93,wz*.009f+21));
+        float coverage=mass*(.70f+.30f*subgroup)*openings;
+        float h=height(x,z);
         float slope=Math.abs(height(x+3,z)-height(x-3,z))+
                     Math.abs(height(x,z+3)-height(x,z-3));
-        float altitude=1f-smooth(60,105,height(x,z));
-        float steep=1f-smooth(6,18,slope);
-        float spawn=smooth(33,90,(float)Math.hypot(x,z));
-        return Math.max(0,Math.min(1,canopy*gaps*steep*altitude*spawn));
+        float altitude=1f-smooth(76,120,h);
+        float steep=1f-smooth(9,23,slope);
+        float spawn=smooth(34,83,(float)Math.hypot(x,z));
+        return Math.max(0,Math.min(1,coverage*steep*altitude*spawn));
     }
     static float pineMask(float x,float z){
-        float warp=noise(x*.0038f+114,z*.0038f-41)*38f;
-        return smooth(-.24f,.28f,noise((x+warp)*.0028f+184,(z-warp)*.0028f-71));
+        // Pinheirais de centenas de metros: um bioma predominante por macico.
+        float bx=x/Math.max(.65f,CLUSTER_SCALE),bz=z/Math.max(.65f,CLUSTER_SCALE);
+        float warp=noise(bx*.0020f+114,bz*.0020f-41)*88f;
+        float field=noise((bx+warp)*.00165f+184,(bz-warp)*.00165f-71)*.79f+
+                    noise(bx*.00365f-31,bz*.00365f+14)*.21f;
+        // Faixa mista apenas nas bordas (ecotono); interior quase monoespecifico.
+        return smooth(-.095f,.095f,field);
     }
     static Mesh ground(float cx,float cz){return ground(cx,cz,156f);}
     static Mesh ground(float cx,float cz,float radius){
@@ -120,10 +128,22 @@ public final class World {
     static final class Decoration {
         Mesh objects,shadows;
         Tree[] trees;
+        final HashMap<Long,Tree[]> collisionCells=new HashMap<>();
         float[] broadleafInstances,pineInstances;
         Decoration(Mesh o,Mesh s,Tree[] trees,float[] broad,float[] pine){
             this.objects=o;this.shadows=s;this.trees=trees;
             broadleafInstances=broad;pineInstances=pine;
+            // Grade espacial construida no worker: colisao O(arvores proximas).
+            HashMap<Long,ArrayList<Tree>> cells=new HashMap<>();
+            for(Tree t:trees){
+                int gx=(int)Math.floor(t.x/14f),gz=(int)Math.floor(t.z/14f);
+                long key=cellKey(gx,gz);
+                ArrayList<Tree> list=cells.get(key);
+                if(list==null){list=new ArrayList<>();cells.put(key,list);}
+                list.add(t);
+            }
+            for(java.util.Map.Entry<Long,ArrayList<Tree>> e:cells.entrySet())
+                collisionCells.put(e.getKey(),e.getValue().toArray(new Tree[0]));
         }
     }
     static Decoration decorate(float cx,float cz){return decorate(cx,cz,156f);}
@@ -131,40 +151,48 @@ public final class World {
         FloatList v=new FloatList(),shadows=new FloatList(),broad=new FloatList(),pine=new FloatList();
         ShortList ids=new ShortList(),shadowIds=new ShortList();
         ArrayList<Tree> trees=new ArrayList<>();
-        // Limite visual proprio para arvores; distancia do solo configuravel em separado.
-        float range=Math.min(radius-12f,236f);
-        // A densidade dos macicos define quantas arvores surgem, sem quota por grupo.
-        // O espacamento permite concentracoes de dezenas de arvores por clareira vizinha.
-        final float spacing=8.45f;
+        // O limite acompanha a distancia configurada, sem teto antigo de 236m.
+        float range=Math.max(48f,radius-12f);
+        // Alta densidade nas proximidades; a floresta so perde amostras no LOD distante.
+        final float spacing=4.55f;
         int minX=(int)Math.floor((cx-range)/spacing)-1,maxX=(int)Math.ceil((cx+range)/spacing)+1;
         int minZ=(int)Math.floor((cz-range)/spacing)-1,maxZ=(int)Math.ceil((cz+range)/spacing)+1;
+        float densityControl=Math.max(.60f,Math.min(2.40f,TREE_DENSITY));
         for(int iz=minZ;iz<=maxZ;iz++)for(int ix=minX;ix<=maxX;ix++){
-            // Jitter espacial determinista: distribui naturalmente sem padrao de grade.
-            float px=(ix+.5f)*spacing+hash(ix*17+33,iz*31-22)*spacing*.40f;
-            float pz=(iz+.5f)*spacing+hash(ix*19-31,iz*23+52)*spacing*.40f;
-            if(Math.abs(px-cx)>range||Math.abs(pz-cz)>range)continue;
+            float px=(ix+.5f)*spacing+hash(ix*17+33,iz*31-22)*spacing*.43f;
+            float pz=(iz+.5f)*spacing+hash(ix*19-31,iz*23+52)*spacing*.43f;
+            float dx=px-cx,dz=pz-cz,dist2=dx*dx+dz*dz;
+            if(Math.abs(dx)>range||Math.abs(dz)>range||dist2>range*range)continue;
+            float distance=(float)Math.sqrt(dist2);
+            // Campo de detalhe determinado pela distancia, sem numero fixo por grupo.
+            // Evita gerar dezenas de milhares de copias GLB inutilizadas a 1km.
+            if(distance>360f){
+                if(Math.floorMod(ix,3)!=0||Math.floorMod(iz,3)!=0)continue;
+            } else if(distance>175f){
+                if(Math.floorMod(ix,2)!=0||Math.floorMod(iz,2)!=0)continue;
+            }
             float density=forestDensity(px,pz);
-            if(density<.13f)continue;
-            float distance=(float)Math.hypot(px-cx,pz-cz);
-            // LOD estocastico e estavel: menos copias nas manchas longinquas.
-            float lod=1f-.56f*smooth(120,230,distance);
-            float probability=Math.min(.88f,density*.72f*lod);
+            if(density<.11f)continue;
+            float core=smooth(.16f,.74f,density);
+            float probability=Math.min(.96f,(.18f+.82f*core)*densityControl);
+            probability*=smooth(.07f,.32f,density);
             if(n01(ix*29+5,iz*37+9)>probability)continue;
-            // Variacao por arvore, com ecotonos mistos em vez de linhas duras.
             float pineProbability=pineMask(px,pz);
             int kind=n01(ix*11+91,iz*13-17)<pineProbability?PINE:BROADLEAF;
-            float py=height(px,pz);
+            // Variacao de escala de 1.0x ate 1.8x, com semente global estavel.
+            float randomScale=1f+.8f*n01(ix*31+7,iz*37+11);
             float base=(kind==PINE?.38f:.77f);
-            float size=base*(.79f+n01(ix*31+7,iz*37+11)*.48f);
-            if(kind==PINE)size*=1.20f; // pinheiros 20% maiores
+            float size=base*(kind==PINE?1.20f:1f)*randomScale;
+            float py=height(px,pz);
             float radiusTrunk=(kind==PINE?1.60f:.52f)*size;
             float rotation=n01(ix*13+4,iz*13-2)*6.283185f;
-            // Origem GLB = -2.6. Enterrar 3% da altura total de cada arvore.
             float modelHeight=(kind==PINE?53f:13.3f);
             float groundOffset=2.6f*size-.03f*modelHeight*size;
             Tree tree=new Tree(kind,px,py+groundOffset,pz,size,rotation,density,radiusTrunk);
             trees.add(tree);
-            shadow(shadows,shadowIds,px,pz,(kind==PINE?10f:5f)*size,(kind==PINE?4f:2.7f)*size);
+            // Sombras de objetos so perto; sombreado florestal do solo ja e procedural.
+            if(distance<115f)shadow(shadows,shadowIds,px,pz,(kind==PINE?10f:5f)*size,
+                (kind==PINE?4f:2.7f)*size);
             FloatList dest=kind==PINE?pine:broad;
             dest.add(tree.x);dest.add(tree.y);dest.add(tree.z);dest.add(tree.scale);
             dest.add(tree.cos);dest.add(tree.sin);dest.add(density);dest.add(0);
@@ -183,17 +211,23 @@ public final class World {
         return new Decoration(new Mesh(v.array(),ids.array()),new Mesh(shadows.array(),shadowIds.array()),
                trees.toArray(new Tree[0]),broad.array(),pine.array());
     }
-    /** Resolve apenas 6 troncos proximos. Isso evita colisao com floresta distante. */
+    static long cellKey(int x,int z){return ((long)x<<32)^(z&0xffffffffL);}
+    /** Resolve apenas os 6 troncos mais proximos, com grade espacial 14m. */
     static void collide(float[] position,float radius,Decoration decoration){
         if(decoration==null)return;
         float px=position[0],pz=position[1];
         Tree[] nearest=new Tree[6];float[] distances={999,999,999,999,999,999};
-        for(Tree t:decoration.trees){
-            float dx=px-t.x,dz=pz-t.z,ds=dx*dx+dz*dz;
-            if(ds>64f)continue;
-            for(int i=0;i<6;i++)if(ds<distances[i]){
-                for(int j=5;j>i;j--){distances[j]=distances[j-1];nearest[j]=nearest[j-1];}
-                distances[i]=ds;nearest[i]=t;break;
+        int gx=(int)Math.floor(px/14f),gz=(int)Math.floor(pz/14f);
+        for(int zz=gz-1;zz<=gz+1;zz++)for(int xx=gx-1;xx<=gx+1;xx++){
+            Tree[] local=decoration.collisionCells.get(cellKey(xx,zz));
+            if(local==null)continue;
+            for(Tree t:local){
+                float dx=px-t.x,dz=pz-t.z,ds=dx*dx+dz*dz;
+                if(ds>64f)continue;
+                for(int i=0;i<6;i++)if(ds<distances[i]){
+                    for(int j=5;j>i;j--){distances[j]=distances[j-1];nearest[j]=nearest[j-1];}
+                    distances[i]=ds;nearest[i]=t;break;
+                }
             }
         }
         for(Tree t:nearest)if(t!=null){

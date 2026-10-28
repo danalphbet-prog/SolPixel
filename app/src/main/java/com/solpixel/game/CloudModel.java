@@ -102,8 +102,8 @@ final class CloudModel {
         int alpha=GLES30.glGetUniformLocation(program,"uAlpha");
         float fade=Math.min(1f,Math.max(0f,time*.8f));
         // Formacao assegurada no horizonte diante da orientacao inicial, acima das montanhas.
-        if(visible(137f,-258f,x,z,dx,dz,820f))
-            drawOne(meshes[1],location,center,alpha,137f,120f,-258f,25f,.90f*fade);
+        if(visible(220f,-590f,x,z,dx,dz,1000f))
+            drawOne(meshes[1],location,center,alpha,220f,230f,-590f,75f,.90f*fade); // solpixel-v06: 3x
         final int cell=245;
         int cx=(int)Math.floor(x/cell),cz=(int)Math.floor(z/cell);
         int rendered=0;
@@ -114,11 +114,11 @@ final class CloudModel {
                 if(hash(gx*11+7,gz*19-5)>.84f)continue;
                 float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*65f;
                 float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*65f;
-                if(!visible(px,pz,x,z,dx,dz,820f))continue;
+                if(!visible(px,pz,x,z,dx,dz,1100f))continue;
                 int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
                 Mesh mesh=meshes[type];
-                float scale=18f+hash(gx*29,gz*17)*9f;
-                float height=100f+hash(gx*37,gz*41)*43f;
+                float scale=54f+hash(gx*29,gz*17)*27f; // 3x tamanho
+                float height=214f+hash(gx*37,gz*41)*63f;
                 drawOne(mesh,location,center,alpha,px,height,pz,scale,.90f*fade);
                 rendered++;
             }

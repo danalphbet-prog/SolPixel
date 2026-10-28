@@ -81,12 +81,12 @@ public final class GameHud extends View {
                 text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.535f,15,0xFFF9E3BE,true);
                 drawSlider(c,w*.31f,w*.69f,h*.60f,game.musicVolume);
                 text(c,"DISTÂNCIA  "+game.renderDistance+" m",w*.5f,h*.725f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.79f,(game.renderDistance-180f)/240f);
+                drawSlider(c,w*.31f,w*.69f,h*.79f,(game.renderDistance-320f)/680f);
             } else {
                 text(c,"ÁRVORES  "+Math.round(game.treeDensity*100)+"%",w*.5f,h*.405f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.48f,(game.treeDensity-.45f)/1.35f);
+                drawSlider(c,w*.31f,w*.69f,h*.48f,(game.treeDensity-.60f)/1.80f);
                 text(c,"ESCALA DOS CLUSTERS  "+Math.round(game.clusterScale*100)+"%",w*.5f,h*.605f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.675f,(game.clusterScale-.65f)/1.65f);
+                drawSlider(c,w*.31f,w*.69f,h*.675f,(game.clusterScale-.65f)/2.35f);
                 drawCheck(c,w*.34f,h*.765f,game.cloudsOn);
                 text(c,"Nuvens 3D",w*.56f,h*.777f,16,0xFFEAF0F3,false);
             }
@@ -131,9 +131,9 @@ public final class GameHud extends View {
     private void applySlider(float x,float w,int which){
         float t=Math.max(0f,Math.min(1f,(x-w*.31f)/(w*.38f)));
         if(which==0)game.setMusicVolume(t);
-        else if(which==1)game.setRenderDistance(180+Math.round(t*3f)*80);
-        else if(which==2)game.setTreeDensity(.45f+t*1.35f);
-        else if(which==3)game.setClusterScale(.65f+t*1.65f);
+        else if(which==1)game.setRenderDistance(new int[]{320,520,760,1000}[Math.min(3,Math.round(t*3f))]);
+        else if(which==2)game.setTreeDensity(.60f+t*1.80f);
+        else if(which==3)game.setClusterScale(.65f+t*2.35f);
     }
     private boolean within(float x,float y,float cx,float cy,float rx,float ry){ return Math.abs(x-cx)<=rx && Math.abs(y-cy)<=ry; }
     @Override public boolean onTouchEvent(MotionEvent e) {

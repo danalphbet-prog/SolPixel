@@ -68,7 +68,7 @@ final class Shaders {
             vec3 color=albedo*(vec3(.37,.43,.47)+warm*light*.82);
             // Escurecimento sob o dossel sem um pesado passe de shadow mapping.
             color*=1.0-clamp(vForest,0.0,1.0)*.49;
-            float fog=smoothstep(uDrawDistance*.34,uDrawDistance*.99,vDist)*.91;
+            float fog=smoothstep(uDrawDistance*.46,uDrawDistance*.995,vDist)*.72; // solpixel-v06: horizonte
             color=mix(color,vec3(.70,.81,.90),fog);
             // Paleta de 5 bits por canal + dithering ordenado: retro PS1.
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
@@ -267,7 +267,7 @@ final class Shaders {
             float sunlight=floor((nl*.83+.17+hash(floor(vWorld.xz*2.0))*.07)*6.)/6.;
             float canopy=1.-vForest*(uLeaf>.5?.44:.51);
             vec3 color=tex.rgb*canopy*(vec3(.46,.49,.49)+sunlight*vec3(.79,.74,.61));
-            float fog=smoothstep(uDrawDistance*.38,uDrawDistance*.99,vDist)*.9;
+            float fog=smoothstep(uDrawDistance*.46,uDrawDistance*.995,vDist)*.72;
             color=mix(color,vec3(.70,.81,.90),fog);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*31.0+dither)/31.0;

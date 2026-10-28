@@ -19,10 +19,10 @@ public final class GameActivity extends Activity {
     private SharedPreferences preferences;
     volatile boolean musicOn=true;
     volatile float musicVolume=.55f;
-    volatile int renderDistance=260;
+    volatile int renderDistance=520;
     // solpixel-v05: parametros persistidos, sem quota fixa de arvores.
-    volatile float treeDensity=1.20f;
-    volatile float clusterScale=1.30f;
+    volatile float treeDensity=1.60f;
+    volatile float clusterScale=1.65f;
     volatile boolean cloudsOn=true;
     volatile int worldRevision=0;
 
@@ -34,10 +34,19 @@ public final class GameActivity extends Activity {
         preferences=getSharedPreferences("SolPixelSettings",MODE_PRIVATE);
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
-        renderDistance=preferences.getInt("distance",260);
-        treeDensity=Math.max(.45f,Math.min(1.80f,preferences.getFloat("trees",1.20f)));
-        clusterScale=Math.max(.65f,Math.min(2.3f,preferences.getFloat("clusters",1.30f)));
+        renderDistance=preferences.getInt("distance",520);
+        treeDensity=Math.max(.60f,Math.min(2.40f,preferences.getFloat("trees",1.60f)));
+        clusterScale=Math.max(.65f,Math.min(3.0f,preferences.getFloat("clusters",1.65f)));
         cloudsOn=preferences.getBoolean("clouds",true);
+        // solpixel-v06: migracao unica dos valores-padrao v0.5.
+        if(!preferences.getBoolean("v06_migrated",false)){
+            if(renderDistance<=260)renderDistance=520;
+            if(treeDensity<=1.20f)treeDensity=1.60f;
+            if(clusterScale<=1.30f)clusterScale=1.65f;
+            preferences.edit().putInt("distance",renderDistance)
+                .putFloat("trees",treeDensity).putFloat("clusters",clusterScale)
+                .putBoolean("v06_migrated",true).apply();
+        }
         World.TREE_DENSITY=treeDensity;
         World.CLUSTER_SCALE=clusterScale;
         try {
@@ -83,21 +92,21 @@ public final class GameActivity extends Activity {
         preferences.edit().putFloat("volume",musicVolume).apply();updateAudio();hud.invalidate();
     }
     void setRenderDistance(int distance){
-        int[] options={180,260,340,420};
+        int[] options={320,520,760,1000};
         int closest=options[0];
         for(int v:options)if(Math.abs(distance-v)<Math.abs(distance-closest))closest=v;
         renderDistance=closest;
         preferences.edit().putInt("distance",renderDistance).apply();hud.invalidate();
     }
     void setTreeDensity(float density){
-        treeDensity=Math.max(.45f,Math.min(1.80f,density));
+        treeDensity=Math.max(.60f,Math.min(2.40f,density));
         World.TREE_DENSITY=treeDensity;
         preferences.edit().putFloat("trees",treeDensity).apply();
         worldRevision++;
         hud.invalidate();
     }
     void setClusterScale(float scale){
-        clusterScale=Math.max(.65f,Math.min(2.30f,scale));
+        clusterScale=Math.max(.65f,Math.min(3.0f,scale));
         World.CLUSTER_SCALE=clusterScale;
         preferences.edit().putFloat("clusters",clusterScale).apply();
         worldRevision++;

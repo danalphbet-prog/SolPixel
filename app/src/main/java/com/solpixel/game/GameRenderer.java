@@ -28,6 +28,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private Target scene,bloomA,bloomB;
     private MeshGpu ground,objects,shadows;
     private TreeModel broadleaf,pines;
+    // solpixel-v06: segundo LOD 3D (arvores distantes com textura procedural).
+    private TreeLodModel broadleafLod,pinesLod;
     private World.Decoration activeDecoration;
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
@@ -59,6 +61,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private volatile boolean jumpPressed=false,resetRequested=true;
     private float lookDX=0,lookDY=0;
     private float x=0,z=0,yaw=.45f,pitch=.10f,airHeight=0,vy=0,time=0,step=0;
+    private float moveVelocityX=0,moveVelocityZ=0,lookRemainingX=0,lookRemainingY=0;
     private long lastFrame;
     GameRenderer(GameActivity game){this.context=game;this.game=game;}
 
@@ -85,6 +88,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
         cloudMask=loadImageTexture("cloud_mask.png");
+        try{
+            broadleafLod=new TreeLodModel(false);
+            pinesLod=new TreeLodModel(true);
+        }catch(Exception ex){Log.e("SolPixel","Falha iniciando LOD 3D das arvores",ex);}
         try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
@@ -168,24 +175,45 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if(resetRequested){
             x=0;z=0;pitch=.08f;yaw=.48f;airHeight=0;vy=0;step=0;
             jumpPressed=false;stickX=stickY=0;resetRequested=false;
+            moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
             consumeLook();
         }
         float[] drag=consumeLook();
-        if(game.state!=1)return;
-        yaw+=drag[0]*.0040f;
-        pitch=Math.max(-1.30f,Math.min(1.30f,pitch-drag[1]*.0034f));
+        if(game.state!=1){
+            moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
+            return;
+        }
+        // solpixel-v06: amortecimento sutil no giro, sem retardo prolongado.
+        lookRemainingX+=drag[0];lookRemainingY+=drag[1];
+        float smoothing=1f-(float)Math.exp(-dt*17f);
+        float turnX=lookRemainingX*smoothing,turnY=lookRemainingY*smoothing;
+        lookRemainingX-=turnX;lookRemainingY-=turnY;
+        if(Math.abs(lookRemainingX)<.015f)lookRemainingX=0;
+        if(Math.abs(lookRemainingY)<.015f)lookRemainingY=0;
+        yaw+=turnX*.0040f;
+        pitch=Math.max(-1.30f,Math.min(1.30f,pitch-turnY*.0034f));
         float mx=stickX,my=stickY;
         float length=(float)Math.hypot(mx,my);
-        if(length>.06f){
-            float speed=length>.92f?7.3f:5.45f;
-            float c=(float)Math.cos(yaw),s=(float)Math.sin(yaw);
-            float targetX=x+(c*mx+s*my)*speed*dt;
-            float targetZ=z+(s*mx-c*my)*speed*dt;
-            collisionPoint[0]=targetX;collisionPoint[1]=targetZ;
-            // Apenas troncos das 6 arvores mais proximas; movimento desliza nas bordas.
-            World.collide(collisionPoint,.48f,activeDecoration);
+        float c=(float)Math.cos(yaw),s=(float)Math.sin(yaw);
+        float speed=length>.06f?(length>.92f?7.3f:5.45f)*Math.min(1f,length*1.17f):0f;
+        float desiredX=(c*mx+s*my)*speed;
+        float desiredZ=(s*mx-c*my)*speed;
+        // Peso fisico: resposta em ~0.1s e freio forte ao soltar o joystick.
+        float rate=speed>0f?11.8f:17.5f;
+        float blend=1f-(float)Math.exp(-rate*dt);
+        moveVelocityX+=(desiredX-moveVelocityX)*blend;
+        moveVelocityZ+=(desiredZ-moveVelocityZ)*blend;
+        if(speed==0f && Math.hypot(moveVelocityX,moveVelocityZ)<.018f){
+            moveVelocityX=moveVelocityZ=0f;
+        }
+        if(moveVelocityX!=0 || moveVelocityZ!=0){
             float oldX=x,oldZ=z;
+            float targetX=x+moveVelocityX*dt,targetZ=z+moveVelocityZ*dt;
+            collisionPoint[0]=targetX;collisionPoint[1]=targetZ;
+            World.collide(collisionPoint,.48f,activeDecoration);
             x=collisionPoint[0];z=collisionPoint[1];
+            if(Math.abs(x-targetX)>.018f)moveVelocityX*=.22f;
+            if(Math.abs(z-targetZ)>.018f)moveVelocityZ*=.22f;
             step+=(float)Math.hypot(x-oldX,z-oldZ);
         }
         if(jumpPressed){
@@ -237,6 +265,15 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",game.renderDistance);
             broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
             pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
+        }
+        if(activeDecoration!=null && broadleafLod!=null && pinesLod!=null){
+            GLES30.glUseProgram(treeP);
+            GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
+            GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
+            v3(treeP,"uSun",SUN);
+            f1(treeP,"uDrawDistance",game.renderDistance);
+            broadleafLod.draw(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
+            pinesLod.draw(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(game.cloudsOn && clouds!=null){
