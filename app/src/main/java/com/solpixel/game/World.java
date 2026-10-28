@@ -9,6 +9,9 @@ public final class World {
     static final float STEP = 3f; // compatibilidade com versoes anteriores
     private static final float SUN_X=.53f, SUN_Z=-.47f;
     static final int BROADLEAF=0, PINE=1;
+    // Controles globais aplicados ao algoritmo procedural; sem quota por cluster.
+    static volatile float TREE_DENSITY=1.20f;
+    static volatile float CLUSTER_SCALE=1.30f;
     static class Mesh {
         final float[] vertices; final short[] indices;
         Mesh(float[] v,short[] i){vertices=v;indices=i;}
@@ -46,19 +49,27 @@ public final class World {
         float mountain=smooth(.02f,.46f,continent);
         float plains=1f-smooth(-.39f,-.07f,continent);
         float hills=noise(wx*.007f,wz*.007f)*7.5f + noise(wx*.022f+31,wz*.022f-29)*2.1f;
-        float dome=.5f+.5f*noise(wx*.0048f+40,wz*.0048f+33);
-        dome=smooth(.18f,.95f,dome);
-        float mountainTop=mountain*(13f+84f*dome+8f*noise(wx*.011f,wz*.011f));
+        // Cumes largos como colinas gigantes: somente frequencias suaves.
+        // smooth() achata naturalmente a derivada perto do topo, sem picos agudos.
+        float dome=.5f+.5f*noise(wx*.0032f+40,wz*.0032f+33);
+        dome=smooth(.11f,.74f,dome);
+        float mountainTop=mountain*(15f+83f*dome);
         float plain=(noise(wx*.012f-41,wz*.012f+19)*.24f);
         float result=(1f-plains)*(hills+mountainTop)+plains*plain;
+        // Saturacao suave dos pontos altos: substitui cumes estreitos por domos
+        // arredondados, preservando encostas/vales e sem cortes horizontais.
+        if(result>48f)result=48f+60f*(1f-(float)Math.exp(-(result-48f)/60f));
         float spawn=1f-smooth(35,88,(float)Math.hypot(x,z));
         return result*(1-spawn)+.15f*spawn;
     }
     /** Densidade multi-escala: manchas extensas, microclareiras e bordas orgânicas.
      *  Nao existe um contador de arvores por cluster: cada ponto e aceito pela mascara. */
     static float forestDensity(float x,float z){
-        float wx=x+noise(x*.0029f+31,z*.0029f-22)*66f;
-        float wz=z+noise(x*.0029f-71,z*.0029f+17)*66f;
+        // Escala das manchas regula biomas/coalescencia sem colocar limite de arvores.
+        float scale=CLUSTER_SCALE;
+        float bx=x/scale,bz=z/scale;
+        float wx=bx+noise(bx*.0029f+31,bz*.0029f-22)*66f;
+        float wz=bz+noise(bx*.0029f-71,bz*.0029f+17)*66f;
         float region=noise(wx*.0048f+19,wz*.0048f-83)*.78f +
                      noise(wx*.014f-6,wz*.014f+9)*.22f;
         float canopy=smooth(-.32f,.15f,region);
@@ -122,7 +133,9 @@ public final class World {
         ArrayList<Tree> trees=new ArrayList<>();
         // Limite visual proprio para arvores; distancia do solo configuravel em separado.
         float range=Math.min(radius-12f,236f);
-        final float spacing=8.6f;
+        // A densidade dos macicos define quantas arvores surgem, sem quota por grupo.
+        // O espacamento permite concentracoes de dezenas de arvores por clareira vizinha.
+        final float spacing=8.45f;
         int minX=(int)Math.floor((cx-range)/spacing)-1,maxX=(int)Math.ceil((cx+range)/spacing)+1;
         int minZ=(int)Math.floor((cz-range)/spacing)-1,maxZ=(int)Math.ceil((cz+range)/spacing)+1;
         for(int iz=minZ;iz<=maxZ;iz++)for(int ix=minX;ix<=maxX;ix++){
@@ -134,8 +147,8 @@ public final class World {
             if(density<.13f)continue;
             float distance=(float)Math.hypot(px-cx,pz-cz);
             // LOD estocastico e estavel: menos copias nas manchas longinquas.
-            float lod=1f-.63f*smooth(100,205,distance);
-            float probability=density*.61f*lod;
+            float lod=1f-.56f*smooth(120,230,distance);
+            float probability=Math.min(.88f,density*.72f*lod);
             if(n01(ix*29+5,iz*37+9)>probability)continue;
             // Variacao por arvore, com ecotonos mistos em vez de linhas duras.
             float pineProbability=pineMask(px,pz);

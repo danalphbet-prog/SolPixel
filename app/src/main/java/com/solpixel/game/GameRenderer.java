@@ -31,6 +31,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private World.Decoration activeDecoration;
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
+    private int appliedWorldRevision=-1;
+    private int pendingWorldRevision=0; // solpixel-v05: regenerate after forest settings change
     private MeshGpu nextGround,nextObjects,nextShadows;
     private BuildResult queuedWorld;
     private int uploadStage;
@@ -83,7 +85,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
         groundTexture=loadTexture();
         cloudMask=loadImageTexture("cloud_mask.png");
-        try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha OBJ nuvens",ex);}
+        try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
             pines=new TreeModel(context,"arvore-2.glb");
@@ -126,16 +128,19 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 activeDecoration=queuedWorld.decoration;
                 baseX=queuedWorld.x;baseZ=queuedWorld.z;
                 worldRadius=Math.round(nextWorldRadius);
+                appliedWorldRevision=pendingWorldRevision;
                 queuedWorld=null;buildingWorld=false;
             }
         }
         int desired=game.renderDistance;
         if(!buildingWorld && (ground==null||worldRadius!=desired ||
+            appliedWorldRevision!=game.worldRevision ||
             Math.abs(x-baseX)>Math.max(45f,desired*.29f)||
             Math.abs(z-baseZ)>Math.max(45f,desired*.29f))){
             final float cx=Math.round(x/48f)*48f,cz=Math.round(z/48f)*48f;
             final float radius=desired;
             buildingWorld=true;
+            pendingWorldRevision=game.worldRevision;
             nextWorldRadius=radius;
             worldWorker.execute(()->{
                 try{completedWorld=new BuildResult(cx,cz,World.ground(cx,cz,radius),World.decorate(cx,cz,radius));}
@@ -230,11 +235,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
             f1(treeP,"uDrawDistance",game.renderDistance);
-            broadleaf.draw(treeP,activeDecoration.broadleafInstances);
-            pines.draw(treeP,activeDecoration.pineInstances);
+            broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
+            pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
-        if(clouds!=null){
+        if(game.cloudsOn && clouds!=null){
             GLES30.glUseProgram(cloudP);
             GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
             v3(cloudP,"uSun",SUN);
@@ -290,7 +295,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float ux=dz>.05f?.5f+.5f*dx/(dz*fov*aspect):-5f;
         float uy=dz>.05f?.5f+.5f*dy/(dz*fov):-5f;
         GLES30.glUniform2f(loc(finalP,"uSunUv"),ux,uy);
-        f1(finalP,"uSunVisible",dz>.05f && ux>-.2f&&ux<1.2f&&uy>-.2f&&uy<1.2f?1:0);
+        f1(finalP,"uSunVisible",0f); // solpixel-v05: nenhum halo/god-ray artificial no ceu
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
     }

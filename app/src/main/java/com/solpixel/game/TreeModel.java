@@ -108,6 +108,42 @@ final class TreeModel {
         for(int i=0;i<count;i++)for(int k=0;k<components;k++)arr[i*components+k]=bin.getFloat(offset+i*stride+k*4);
         return arr;
     }
+    // solpixel-v05: LOD/frustum simples. Arvores existem integralmente no mapa,
+    // mas GPU recebe so instancias proximas/visiveis.
+    private float[] visibilitySource=null,visibleInstances=null;
+    private float viewX=Float.MAX_VALUE,viewZ=Float.MAX_VALUE,dirX=2f,dirZ=2f,visibleDistance=-1f;
+    void drawCulled(int program,float[] instances,float eyeX,float eyeZ,float forwardX,float forwardZ,float maxDistance){
+        float horizontal=(float)Math.hypot(forwardX,forwardZ);
+        if(horizontal>.01f){forwardX/=horizontal;forwardZ/=horizontal;}
+        boolean dirty=instances!=visibilitySource || visibleInstances==null ||
+            Math.abs(eyeX-viewX)>3f || Math.abs(eyeZ-viewZ)>3f ||
+            forwardX*dirX+forwardZ*dirZ < .980f || maxDistance!=visibleDistance;
+        if(dirty){
+            float[] selected=new float[instances.length];
+            int n=0;
+            float maxDist2=maxDistance*maxDistance;
+            for(int off=0;off<instances.length;off+=8){
+                float px=instances[off],pz=instances[off+2];
+                float vx=px-eyeX,vz=pz-eyeZ,dist2=vx*vx+vz*vz;
+                if(dist2>maxDist2)continue;
+                if(dist2>1600f && vx*forwardX+vz*forwardZ<-.25f*(float)Math.sqrt(dist2))continue;
+                float dist=(float)Math.sqrt(dist2);
+                if(dist>115f){
+                    float t=Math.min(1f,(dist-115f)/Math.max(1f,maxDistance-115f));
+                    float keep=.90f-.58f*t;
+                    int h=Float.floatToIntBits(px*1.71f)^Float.floatToIntBits(pz*2.27f);
+                    h^=h>>>16;h*=0x7feb352d;h^=h>>>15;
+                    float random=(h & 0x7fffffff)/2147483648f;
+                    if(random>keep)continue;
+                }
+                System.arraycopy(instances,off,selected,n,8);n+=8;
+            }
+            visibleInstances=java.util.Arrays.copyOf(selected,n);
+            visibilitySource=instances;viewX=eyeX;viewZ=eyeZ;
+            dirX=forwardX;dirZ=forwardZ;visibleDistance=maxDistance;
+        }
+        draw(program,visibleInstances);
+    }
     void draw(int program,float[] instances){
         int count=instances.length/8;
         if(count==0)return;

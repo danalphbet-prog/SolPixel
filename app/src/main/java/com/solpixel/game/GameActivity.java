@@ -20,6 +20,11 @@ public final class GameActivity extends Activity {
     volatile boolean musicOn=true;
     volatile float musicVolume=.55f;
     volatile int renderDistance=260;
+    // solpixel-v05: parametros persistidos, sem quota fixa de arvores.
+    volatile float treeDensity=1.20f;
+    volatile float clusterScale=1.30f;
+    volatile boolean cloudsOn=true;
+    volatile int worldRevision=0;
 
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -30,6 +35,11 @@ public final class GameActivity extends Activity {
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
         renderDistance=preferences.getInt("distance",260);
+        treeDensity=Math.max(.45f,Math.min(1.80f,preferences.getFloat("trees",1.20f)));
+        clusterScale=Math.max(.65f,Math.min(2.3f,preferences.getFloat("clusters",1.30f)));
+        cloudsOn=preferences.getBoolean("clouds",true);
+        World.TREE_DENSITY=treeDensity;
+        World.CLUSTER_SCALE=clusterScale;
         try {
             ambient=MediaPlayer.create(this,R.raw.ambient_music);
             if(ambient!=null){ambient.setLooping(true);ambient.setVolume(musicVolume,musicVolume);}
@@ -78,6 +88,25 @@ public final class GameActivity extends Activity {
         for(int v:options)if(Math.abs(distance-v)<Math.abs(distance-closest))closest=v;
         renderDistance=closest;
         preferences.edit().putInt("distance",renderDistance).apply();hud.invalidate();
+    }
+    void setTreeDensity(float density){
+        treeDensity=Math.max(.45f,Math.min(1.80f,density));
+        World.TREE_DENSITY=treeDensity;
+        preferences.edit().putFloat("trees",treeDensity).apply();
+        worldRevision++;
+        hud.invalidate();
+    }
+    void setClusterScale(float scale){
+        clusterScale=Math.max(.65f,Math.min(2.30f,scale));
+        World.CLUSTER_SCALE=clusterScale;
+        preferences.edit().putFloat("clusters",clusterScale).apply();
+        worldRevision++;
+        hud.invalidate();
+    }
+    void setCloudsOn(boolean enabled){
+        cloudsOn=enabled;
+        preferences.edit().putBoolean("clouds",enabled).apply();
+        hud.invalidate();
     }
     private void updateAudio(){
         if(ambient==null)return;

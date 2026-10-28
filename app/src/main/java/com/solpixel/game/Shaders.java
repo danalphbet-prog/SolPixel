@@ -97,16 +97,13 @@ final class Shaders {
         uniform float uAspect,uFov;
         out vec4 outColor;
         void main(){
+            // APENAS gradiente azul: sem panorama, nuvens artificiais, disco solar ou ruido.
             vec2 q=(vUv*2.0-1.0)*vec2(uAspect,1.0)*uFov;
             vec3 dir=normalize(uForward+q.x*uRight+q.y*uUp);
-            float altitude=smoothstep(-.25,.75,dir.y);
-            // Horizonte azul mais claro e zenite azul forte, sem panorama.
-            vec3 sky=mix(vec3(.77,.88,.97),vec3(.21,.47,.75),altitude);
-            sky=mix(sky,vec3(.14,.36,.68),smoothstep(.48,1.0,dir.y)*.45);
-            float sun=max(dot(dir,normalize(uSun)),0.0);
-            sky+=vec3(.93,.82,.64)*pow(sun,48.0)*.22;
-            sky=mix(sky,vec3(1.0,.96,.79),smoothstep(.9991,.9998,sun));
-            outColor=vec4(sky,1.0);
+            float altitude=smoothstep(-.22,.85,dir.y);
+            vec3 horizon=vec3(.69,.85,.98);
+            vec3 zenith=vec3(.18,.45,.78);
+            outColor=vec4(mix(horizon,zenith,altitude),1.0);
         }
         """;
     static final String BRIGHT_F = """
