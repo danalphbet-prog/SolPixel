@@ -92,47 +92,52 @@ final class CloudModel {
         n=(n^(n>>>13))*1274126177;
         return ((n^(n>>>16))&0x7fffffff)/2147483648f;
     }
-    /** Grade estatica: nunca remove nuvens pelo pitch/direcao da camera.
-     *  A visibilidade muda continuamente com a distancia, evitando piscadas.
-     *  O proprio clipping OpenGL cuida do campo de visao. */
+    /** Nuvens voxel estaticas bem alem do terreno, com afastamento suave.
+     *  Coordenadas globais independentes do movimento/rotacao da camera.
+     *  Nenhum limite fixo por frame: a aparicao depende apenas da distancia.
+     */
     void draw(int program,float x,float eyeY,float z,float dx,float dz,float time,float visibility){
         GLES30.glEnable(GLES30.GL_BLEND);
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA,GLES30.GL_ONE_MINUS_SRC_ALPHA);
-        GLES30.glDepthMask(false);
-        int loc=GLES30.glGetUniformLocation(program,"uCloudPosScale");
+        // A mascara de profundidade das nuvens visiveis oculta god rays.
+        // O fragment shader usa alpha-dither para suavizar o contorno/fade.
+        GLES30.glDepthMask(true);
+        int pos=GLES30.glGetUniformLocation(program,"uCloudPosScale");
         int center=GLES30.glGetUniformLocation(program,"uCloudCenter");
         int alpha=GLES30.glGetUniformLocation(program,"uAlpha");
         float intro=fade(0f,2.8f,time)*visibility;
-        // Nuvem de referencia fixa: o fade depende da distancia, nao da direcao.
-        float fixedDist=(float)Math.hypot(220f-x,-590f-z);
-        float fixedOpacity=.90f*intro*fade(165f,295f,fixedDist)*
-                                 (1f-fade(690f,960f,fixedDist));
-        if(fixedOpacity>.015f)
-            drawOne(meshes[1],loc,center,alpha,220f,230f,-590f,75f,fixedOpacity);
-        final int cell=245;
-        int cx=(int)Math.floor(x/cell),cz=(int)Math.floor(z/cell);
-        for(int j=-4;j<=4;j++)for(int i=-4;i<=4;i++){
-            int gx=cx+i,gz=cz+j;
-            if(hash(gx*11+7,gz*19-5)>.84f)continue;
-            float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*65f;
-            float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*65f;
-            float dist=(float)Math.hypot(px-x,pz-z);
-            float near=fade(145f,290f,dist);
-            float far=1f-fade(710f,990f,dist);
-            float opacity=.90f*intro*near*far;
-            if(opacity<.015f)continue;
-            int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
-            Mesh mesh=meshes[type];
-            float scale=54f+hash(gx*29,gz*17)*27f;
-            float height=214f+hash(gx*37,gz*41)*63f;
-            drawOne(mesh,loc,center,alpha,px,height,pz,scale,opacity);
+        if(intro>.001f){
+            // Referencia fixa distante, acima do ponto de vista inicial.
+            float fixedDist=(float)Math.hypot(350f-x,-1120f-z);
+            float fixedFade=fade(440f,650f,fixedDist)*(1f-fade(1420f,1750f,fixedDist));
+            if(fixedFade*intro>.014f)
+                drawOne(meshes[1],pos,center,alpha,350f,340f,-1120f,86f,.90f*intro*fixedFade);
+
+            final int cell=420;
+            int cx=(int)Math.floor(x/cell),cz=(int)Math.floor(z/cell);
+            // A borda de busca fica FORA da banda do fade: sem aparecimento repentino.
+            for(int j=-5;j<=5;j++)for(int i=-5;i<=5;i++){
+                int gx=cx+i,gz=cz+j;
+                if(hash(gx*11+7,gz*19-5)>.88f)continue;
+                float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*92f;
+                float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*92f;
+                float dist=(float)Math.hypot(px-x,pz-z);
+                float opacity=.90f*intro*fade(440f,650f,dist)*
+                                          (1f-fade(1420f,1750f,dist));
+                if(opacity<=.014f)continue;
+                int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
+                Mesh mesh=meshes[type];
+                float scale=72f+hash(gx*29,gz*17)*31f;
+                float height=327f+hash(gx*37,gz*41)*67f;
+                drawOne(mesh,pos,center,alpha,px,height,pz,scale,opacity);
+            }
         }
         GLES30.glBindVertexArray(0);
         GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
     }
-    private static float fade(float start,float end,float v){
-        float t=Math.max(0f,Math.min(1f,(v-start)/(end-start)));
+    private static float fade(float start,float end,float value){
+        float t=Math.max(0f,Math.min(1f,(value-start)/(end-start)));
         return t*t*(3f-2f*t);
     }
     private static void drawOne(Mesh mesh,int loc,int center,int alpha,float px,float py,float pz,float scale,float opacity){

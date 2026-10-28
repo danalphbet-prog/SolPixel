@@ -126,7 +126,8 @@ final class Shaders {
             float altitude=smoothstep(-.22,.85,dir.y);
             vec3 horizon=vec3(.82,.92,1.0);
             vec3 zenith=vec3(.32,.59,.89);
-            vec3 sky=mix(horizon,zenith,altitude);
+            // SolPixel v0.10: 15% mais escuro no ceu, sol preservado.
+            vec3 sky=mix(horizon,zenith,altitude)*.85;
             // solpixel-v08: disco solar e corona reais no shader de ceu.
             float towards=dot(dir,normalize(uSun));
             float disc=smoothstep(.99920,.99985,towards);
@@ -175,15 +176,21 @@ final class Shaders {
         uniform float uSunVisible;
         out vec4 outColor;
         float linearDepth(float d){
-            float near=.12,far=1100.0,z=d*2.0-1.0;
+            float near=.12,far=2200.0,z=d*2.0-1.0;
             return 2.0*near*far/(far+near-z*(far-near));
+        }
+        // Usar profundidade para separar ceu de nuvens e montanhas:
+        // as nuvens com dithering escrevem profundidade nos pixels visiveis.
+        float skyOpen(vec2 uv){
+            if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)return 0.0;
+            return step(.999997,texture(uDepth,uv).r);
         }
         void main(){
             vec3 color=texture(uScene,vUv).rgb;
             float d=texture(uDepth,vUv).r;
             float dist=linearDepth(d);
             float blur=smoothstep(18.0,145.0,dist)*.85;
-            if(d>.99995)blur=.15;
+            if(d>.9997)blur=.15;
             blur=max(blur,(1.0-smoothstep(1.0,5.0,dist))*.18);
             if(blur>.025){
                 vec3 sum=vec3(0.0);
@@ -192,31 +199,34 @@ final class Shaders {
                 for(int i=0;i<8;i++)sum+=texture(uScene,vUv+kernel[i]*uTexel*(1.0+blur*4.5)).rgb;
                 color=mix(color,sum*.125,blur*.63);
             }
-            vec3 bloom=texture(uBloom,vUv).rgb;
-            color+=bloom*.95;
-            if(uSunVisible>.5){
+            color+=texture(uBloom,vUv).rgb*.95;
+            if(uSunVisible>.001){
                 vec2 toSun=uSunUv-vUv;
                 float radius=length(toSun);
                 float angle=atan(toSun.y,toSun.x);
-                float spikes=pow(max(0.0,cos(angle*11.0)),18.0);
-                // Sol oculto pelo relevo nao deve iluminar atraves da montanha.
-                float centerDepth=texture(uDepth,clamp(uSunUv,vec2(.001),vec2(.999))).r;
-                float sunExposed=step(.9997,centerDepth);
-                float bloomHalo=exp(-radius*5.0)*(.27+spikes*.42);
-                float shafts=0.0;
+                // Visibilidade parcial do disco permite raios pelas aberturas das nuvens.
+                const vec2 ring[9]=vec2[9](vec2(0,0),
+                  vec2(.012,0),vec2(-.012,0),vec2(0,.012),vec2(0,-.012),
+                  vec2(.009,.009),vec2(-.009,.009),vec2(.009,-.009),vec2(-.009,-.009));
+                float openSun=0.0;
+                for(int i=0;i<9;i++)openSun+=skyOpen(uSunUv+ring[i]);
+                openSun/=9.0;
+                float sunGate=smoothstep(.028,.33,openSun);
+                float halo=exp(-radius*5.6)*.32+exp(-radius*16.0)*.25;
+                float spikes=pow(max(0.0,cos(angle*10.0)),32.0)*exp(-radius*4.4)*.19;
+                float shaftSamples=0.0;
                 for(int i=1;i<=12;i++){
                     float t=float(i)/13.0;
                     vec2 sampleUv=vUv+toSun*t;
-                    if(sampleUv.x>=0.0&&sampleUv.x<=1.0&&sampleUv.y>=0.0&&sampleUv.y<=1.0){
-                        float clear=step(.9997,texture(uDepth,sampleUv).r);
-                        float nearSun=exp(-length(sampleUv-uSunUv)*7.0);
-                        shafts+=clear*(.30+.70*nearSun)*.08333;
-                    }
+                    // Folhas, montanhas e as proprias nuvens recortam os raios.
+                    float clear=skyOpen(sampleUv);
+                    shaftSamples+=clear*(.38+.62*t)/12.0;
                 }
-                float beams=shafts*(.50+.50*spikes)*exp(-radius*2.4);
-                color+=vec3(1.0,.78,.52)*sunExposed*(bloomHalo+beams*.85);
+                float irregular=.75+.25*pow(max(0.0,cos(angle*13.0+.5)),4.0);
+                float shafts=shaftSamples*exp(-radius*2.7)*irregular*.72;
+                color+=vec3(1.0,.79,.55)*uSunVisible*sunGate*
+                       (halo+spikes+shafts);
             }
-            // Filmic simples / tone mapping seguido de gamma.
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));
             float vignette=1.0-.20*dot(vUv-.5,vUv-.5);
@@ -395,23 +405,33 @@ final class Shaders {
         uniform vec3 uSun;
         uniform float uAlpha;
         out vec4 outColor;
+        float bayer(vec2 pixel){
+            // Matriz Bayer 4x4 fixa. O padrao nao varia no tempo: sem cintilacao.
+            const float b[16]=float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
+            ivec2 p=ivec2(mod(floor(pixel),4.0));
+            return (b[p.x+4*p.y]+.5)/16.0;
+        }
         void main(){
+            float dither=bayer(gl_FragCoord.xy);
+            // Dissolve graduado em pixels, apenas nas faixas de transicao.
+            // Na visibilidade maxima a nuvem permanece 90% opaca.
+            float visibility=clamp(uAlpha/.90,0.0,1.0);
+            float coverage=smoothstep(0.0,1.0,visibility);
+            if(dither>coverage)discard;
             vec3 n=normalize(vNormal);
-            vec2 localUv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
-            // Mascara halftone enviada pelo usuario, repetida nas faces voxel.
-            float mask=texture(uCloudMask,localUv*.95).r;
-            // solpixel-v08: ColorRamp de dois pontos com iluminacao direcional.
+            vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
+            float mask=texture(uCloudMask,uv*.95).r;
             float light=max(0.0,dot(n,normalize(uSun)));
             float skyFill=.18+.18*max(n.y,0.0);
-            float ramp=smoothstep(.18,.83,light*.84+skyFill);
+            // Dithering tambem no ColorRamp azul-acinzentado -> branco.
+            float ramp=smoothstep(.18,.83,light*.84+skyFill+(dither-.5)*.115);
             vec3 shadowBlueGray=vec3(.48,.58,.69);
             vec3 sunWhite=vec3(.99,.995,1.0);
             vec3 color=mix(shadowBlueGray,sunWhite,ramp);
-            // Textura original halftone; pouca modulacao para preservar os dois tons.
             color*=mix(.91,1.04,mask);
-            float dither=mod(gl_FragCoord.x+2.0*mod(gl_FragCoord.y,2.0),4.0)/4.0;
-            color=floor(clamp(color,0.0,1.0)*47.0+dither*.60)/47.0;
-            outColor=vec4(color,uAlpha);
+            color=min(color*1.10,vec3(1.0)); // +10% de claridade
+            color=floor(color*47.0+dither*.60)/47.0;
+            outColor=vec4(color,.90);
         }
         """;
 }

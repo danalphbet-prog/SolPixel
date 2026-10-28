@@ -118,7 +118,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         scene=Target.make(sceneW,sceneH,true);
         bloomA=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
         bloomB=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
-        Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,1100f);
+        // Nuvens alem de 1 km: aumentar clipping sem aumentar o raio do terreno.
+        Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,2200f);
     }
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
@@ -354,7 +355,16 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float ux=dz>.05f?.5f+.5f*dx/(dz*fov*aspect):-5f;
         float uy=dz>.05f?.5f+.5f*dy/(dz*fov):-5f;
         GLES30.glUniform2f(loc(finalP,"uSunUv"),ux,uy);
-        f1(finalP,"uSunVisible",0f); // solpixel-v05: nenhum halo/god-ray artificial no ceu
+        // Halo angulado: surge suavemente perto da direcao solar e das bordas da tela.
+        float solar=0f;
+        if(dz>.04f && ux>-.25f && ux<1.25f && uy>-.25f && uy<1.25f){
+            float forwardFactor=Math.min(1f,Math.max(0f,(dz-.04f)/.23f));
+            float edgeX=Math.min((ux+.25f)/.33f,(1.25f-ux)/.33f);
+            float edgeY=Math.min((uy+.25f)/.33f,(1.25f-uy)/.33f);
+            float edgeFactor=Math.min(1f,Math.max(0f,Math.min(edgeX,edgeY)));
+            solar=forwardFactor*edgeFactor;
+        }
+        f1(finalP,"uSunVisible",solar);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
     }
