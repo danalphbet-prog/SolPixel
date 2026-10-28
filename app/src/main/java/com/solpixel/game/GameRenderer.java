@@ -52,7 +52,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int dustVao,dustVbo,dustCount;
     private final float[] proj=new float[16],view=new float[16],vp=new float[16];
     private final float[] forward=new float[3],right=new float[3],up=new float[3];
-    private static final float[] SUN={.53f,.70f,-.47f};
+    // solpixel-v08: sol visivel ao olhar ligeiramente para cima.
+    private static final float[] SUN={.53f,.48f,-.47f};
     private int screenW=1,screenH=1,sceneW=1,sceneH=1;
     private float baseX=99999,baseZ=99999;
     private volatile float stickX=0,stickY=0;

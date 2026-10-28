@@ -67,8 +67,9 @@ final class Shaders {
             vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84;
             vec3 color=albedo*(ambient+direct);
             color*=1.0-clamp(vForest,0.0,1.0)*.30;
-            float fog=smoothstep(uDrawDistance*.53,uDrawDistance*1.05,vDist)*.68;
-            color=mix(color,vec3(.77,.89,.99),fog);
+            // solpixel-v08: nevoa atmosferica desde meia distancia.
+            float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
+            color=mix(color,vec3(.82,.92,1.0),fog);
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+bayer*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -101,7 +102,15 @@ final class Shaders {
             float altitude=smoothstep(-.22,.85,dir.y);
             vec3 horizon=vec3(.82,.92,1.0);
             vec3 zenith=vec3(.32,.59,.89);
-            outColor=vec4(mix(horizon,zenith,altitude),1.0);
+            vec3 sky=mix(horizon,zenith,altitude);
+            // solpixel-v08: disco solar e corona reais no shader de ceu.
+            float towards=dot(dir,normalize(uSun));
+            float disc=smoothstep(.99920,.99985,towards);
+            float innerHalo=pow(max(towards,0.0),75.0);
+            float outerHalo=pow(max(towards,0.0),13.0);
+            sky+=vec3(1.0,.73,.44)*(innerHalo*.40+outerHalo*.075);
+            sky=mix(sky,vec3(2.0,1.70,1.24),disc);
+            outColor=vec4(sky,1.0);
         }
         """;
     static final String BRIGHT_F = """
@@ -114,7 +123,8 @@ final class Shaders {
             for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++)
                 c+=texture(uScene,vUv+vec2(float(x),float(y))*uTexel*2.0).rgb/9.0;
             float l=dot(c,vec3(.2126,.7152,.0722));
-            c=max(c-vec3(.60),vec3(0.0))*smoothstep(.52,.95,l)*1.6;
+            // Bloom seleciona o sol e os pontos mais luminosos, nao todo o ceu.
+            c=max(c-vec3(.90),vec3(0.0))*smoothstep(.85,.98,l)*2.7;
             outColor=vec4(c,1.0);
         }
         """;
@@ -164,20 +174,23 @@ final class Shaders {
                 vec2 toSun=uSunUv-vUv;
                 float radius=length(toSun);
                 float angle=atan(toSun.y,toSun.x);
-                float spikes=pow(max(.0,cos(angle*13.0)),24.0);
-                float glow=exp(-radius*3.7)*(0.21+spikes*.26);
-                // Raios: amostragem radial com oclusao simplificada pela profundidade.
+                float spikes=pow(max(0.0,cos(angle*11.0)),18.0);
+                // Sol oculto pelo relevo nao deve iluminar atraves da montanha.
+                float centerDepth=texture(uDepth,clamp(uSunUv,vec2(.001),vec2(.999))).r;
+                float sunExposed=step(.9997,centerDepth);
+                float bloomHalo=exp(-radius*5.0)*(.27+spikes*.42);
                 float shafts=0.0;
-                for(int i=1;i<=9;i++){
-                    float t=float(i)/10.0;
+                for(int i=1;i<=12;i++){
+                    float t=float(i)/13.0;
                     vec2 sampleUv=vUv+toSun*t;
                     if(sampleUv.x>=0.0&&sampleUv.x<=1.0&&sampleUv.y>=0.0&&sampleUv.y<=1.0){
-                        float occlusion=step(.9998,texture(uDepth,sampleUv).r);
-                        vec3 luminance=texture(uScene,sampleUv).rgb;
-                        shafts+=occlusion*smoothstep(.45,1.3,dot(luminance,vec3(.3,.5,.2)))*.112;
+                        float clear=step(.9997,texture(uDepth,sampleUv).r);
+                        float nearSun=exp(-length(sampleUv-uSunUv)*7.0);
+                        shafts+=clear*(.30+.70*nearSun)*.08333;
                     }
                 }
-                color+=vec3(1.0,.70,.39)*(glow+shafts*.20);
+                float beams=shafts*(.50+.50*spikes)*exp(-radius*2.4);
+                color+=vec3(1.0,.78,.52)*sunExposed*(bloomHalo+beams*.85);
             }
             // Filmic simples / tone mapping seguido de gamma.
             color=color/(color+vec3(1.0));
@@ -274,8 +287,9 @@ final class Shaders {
             vec3 sunlight=vec3(1.08,1.01,.89)*sunDiffuse*.82;
             float canopy=1.-vForest*(uLeaf>.5?.28:.35);
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
-            float fog=smoothstep(uDrawDistance*.53,uDrawDistance*1.05,vDist)*.68;
-            color=mix(color,vec3(.77,.89,.99),fog);
+            // solpixel-v08: nevoa tambem nas folhas GLB originais.
+            float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
+            color=mix(color,vec3(.82,.92,1.0),fog);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -313,13 +327,17 @@ final class Shaders {
             vec2 localUv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
             // Mascara halftone enviada pelo usuario, repetida nas faces voxel.
             float mask=texture(uCloudMask,localUv*.95).r;
-            float light=max(.0,dot(n,normalize(uSun)));
-            float cel=floor((.40+light*.60)*5.0)/5.0;
-            vec3 ivory=vec3(.99,.962,.87),gray=vec3(.52,.55,.54);
-            vec3 color=mix(gray,ivory,cel);
-            color*=mix(.77,1.05,mask);
+            // solpixel-v08: ColorRamp de dois pontos com iluminacao direcional.
+            float light=max(0.0,dot(n,normalize(uSun)));
+            float skyFill=.18+.18*max(n.y,0.0);
+            float ramp=smoothstep(.18,.83,light*.84+skyFill);
+            vec3 shadowBlueGray=vec3(.48,.58,.69);
+            vec3 sunWhite=vec3(.99,.995,1.0);
+            vec3 color=mix(shadowBlueGray,sunWhite,ramp);
+            // Textura original halftone; pouca modulacao para preservar os dois tons.
+            color*=mix(.91,1.04,mask);
             float dither=mod(gl_FragCoord.x+2.0*mod(gl_FragCoord.y,2.0),4.0)/4.0;
-            color=floor(clamp(color,0.0,1.0)*31.0+dither)/31.0;
+            color=floor(clamp(color,0.0,1.0)*47.0+dither*.60)/47.0;
             outColor=vec4(color,uAlpha);
         }
         """;

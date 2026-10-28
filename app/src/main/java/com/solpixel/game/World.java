@@ -10,9 +10,9 @@ public final class World {
     static final float STEP = 3f; // compatibilidade com versoes anteriores
     private static final float SUN_X=.53f, SUN_Z=-.47f;
     static final int BROADLEAF=0, PINE=1;
-    // Controles globais aplicados ao algoritmo procedural; sem quota por cluster.
-    static volatile float TREE_DENSITY=1.20f;
-    static volatile float CLUSTER_SCALE=1.30f;
+    // solpixel-v08: parametros procedurais fixos, nao expostos nas configuracoes.
+    static final float TREE_DENSITY=1.60f;
+    static final float CLUSTER_SCALE=1.65f;
     static class Mesh {
         final float[] vertices; final short[] indices;
         Mesh(float[] v,short[] i){vertices=v;indices=i;}
@@ -172,6 +172,8 @@ public final class World {
             float core=smooth(.16f,.74f,density);
             float probability=Math.min(.96f,(.18f+.82f*core)*densityControl);
             probability*=smooth(.07f,.32f,density);
+            // solpixel-v08: 20% menos arvores que a floresta padrao da v0.7.
+            probability*=.80f;
             if(n01(ix*29+5,iz*37+9)>probability)continue;
             float pineProbability=pineMask(px,pz);
             int kind=n01(ix*11+91,iz*13-17)<pineProbability?PINE:BROADLEAF;

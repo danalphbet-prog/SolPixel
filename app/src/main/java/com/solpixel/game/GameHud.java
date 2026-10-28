@@ -14,7 +14,6 @@ public final class GameHud extends View {
     private int moveId = -1, lookId = -1, jumpId = -1;
     private int sliderId=-1;
     private int sliderWhich=-1;
-    private int settingsTab=0; // solpixel-v05: 0 audio/grafico, 1 floresta/nuvens
     private float lastLookX,lastLookY, stickX,stickY;
     private float density;
     GameHud(GameActivity game) {
@@ -68,28 +67,18 @@ public final class GameHud extends View {
             return;
         }
         if(game.state==3){
+            // solpixel-v08: configuracao compacta, sem controles de geracao.
             ink(0xD90B1825);c.drawRect(0,0,w,h,p);
-            rounded(c,w*.17f,h*.06f,w*.83f,h*.95f,12,0xFA1B344A);
-            text(c,"CONFIGURAÇÕES",w*.5f,h*.19f,24,0xFFF7E8CE,true);
-            rounded(c,w*.29f,h*.23f,w*.49f,h*.32f,7,settingsTab==0?0xFFF2BD7D:0xFF4B6880);
-            rounded(c,w*.51f,h*.23f,w*.71f,h*.32f,7,settingsTab==1?0xFFF2BD7D:0xFF4B6880);
-            text(c,"ÁUDIO / VÍDEO",w*.39f,h*.295f,12,settingsTab==0?0xFF193344:0xFFF4F4EE,true);
-            text(c,"FLORESTA",w*.61f,h*.295f,12,settingsTab==1?0xFF193344:0xFFF4F4EE,true);
-            if(settingsTab==0){
-                drawCheck(c,w*.34f,h*.405f,game.musicOn);
-                text(c,"Música ambiente",w*.56f,h*.42f,16,0xFFEAF0F3,false);
-                text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.535f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.60f,game.musicVolume);
-                text(c,"DISTÂNCIA  "+game.renderDistance+" m",w*.5f,h*.725f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.79f,(game.renderDistance-320f)/680f);
-            } else {
-                text(c,"ÁRVORES  "+Math.round(game.treeDensity*100)+"%",w*.5f,h*.405f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.48f,(game.treeDensity-.60f)/1.80f);
-                text(c,"ESCALA DOS CLUSTERS  "+Math.round(game.clusterScale*100)+"%",w*.5f,h*.605f,15,0xFFF9E3BE,true);
-                drawSlider(c,w*.31f,w*.69f,h*.675f,(game.clusterScale-.65f)/2.35f);
-                drawCheck(c,w*.34f,h*.765f,game.cloudsOn);
-                text(c,"Nuvens 3D",w*.56f,h*.777f,16,0xFFEAF0F3,false);
-            }
+            rounded(c,w*.19f,h*.07f,w*.81f,h*.95f,12,0xFA1B344A);
+            text(c,"CONFIGURAÇÕES",w*.5f,h*.20f,25,0xFFF7E8CE,true);
+            drawCheck(c,w*.33f,h*.345f,game.musicOn);
+            text(c,"Música ambiente",w*.55f,h*.36f,16,0xFFEAF0F3,false);
+            text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.475f,15,0xFFF9E3BE,true);
+            drawSlider(c,w*.31f,w*.69f,h*.54f,game.musicVolume);
+            text(c,"DISTÂNCIA  "+game.renderDistance+" m",w*.5f,h*.635f,15,0xFFF9E3BE,true);
+            drawSlider(c,w*.31f,w*.69f,h*.70f,(game.renderDistance-180f)/240f);
+            drawCheck(c,w*.33f,h*.785f,game.cloudsOn);
+            text(c,"Nuvens 3D",w*.55f,h*.798f,16,0xFFEAF0F3,false);
             rounded(c,w*.41f,h*.865f,w*.59f,h*.935f,8,0xFFF2BD7D);
             text(c,"VOLTAR",w*.5f,h*.916f,13,0xFF193344,true);
             return;
@@ -131,9 +120,7 @@ public final class GameHud extends View {
     private void applySlider(float x,float w,int which){
         float t=Math.max(0f,Math.min(1f,(x-w*.31f)/(w*.38f)));
         if(which==0)game.setMusicVolume(t);
-        else if(which==1)game.setRenderDistance(new int[]{320,520,760,1000}[Math.min(3,Math.round(t*3f))]);
-        else if(which==2)game.setTreeDensity(.60f+t*1.80f);
-        else if(which==3)game.setClusterScale(.65f+t*2.35f);
+        else if(which==1)game.setRenderDistance(new int[]{180,260,340,420}[Math.min(3,Math.round(t*3f))]);
     }
     private boolean within(float x,float y,float cx,float cy,float rx,float ry){ return Math.abs(x-cx)<=rx && Math.abs(y-cy)<=ry; }
     @Override public boolean onTouchEvent(MotionEvent e) {
@@ -150,17 +137,10 @@ public final class GameHud extends View {
                 else if(within(x,y,w/2,h*.69f+dp(23),dp(140),dp(30))) game.mainMenu();
             } else if(game.state==3){
                 if(within(x,y,w*.5f,h*.90f,w*.11f,h*.047f))game.closeSettings();
-                else if(within(x,y,w*.39f,h*.275f,w*.10f,h*.05f)){settingsTab=0;sliderId=-1;}
-                else if(within(x,y,w*.61f,h*.275f,w*.10f,h*.05f)){settingsTab=1;sliderId=-1;}
-                else if(settingsTab==0){
-                    if(within(x,y,w*.42f,h*.41f,w*.18f,h*.055f))game.setMusicOn(!game.musicOn);
-                    else if(Math.abs(y-h*.60f)<h*.055f){sliderId=id;sliderWhich=0;applySlider(x,w,0);}
-                    else if(Math.abs(y-h*.79f)<h*.055f){sliderId=id;sliderWhich=1;applySlider(x,w,1);}
-                } else {
-                    if(within(x,y,w*.43f,h*.765f,w*.18f,h*.055f))game.setCloudsOn(!game.cloudsOn);
-                    else if(Math.abs(y-h*.48f)<h*.055f){sliderId=id;sliderWhich=2;applySlider(x,w,2);}
-                    else if(Math.abs(y-h*.675f)<h*.055f){sliderId=id;sliderWhich=3;applySlider(x,w,3);}
-                }
+                else if(within(x,y,w*.43f,h*.345f,w*.18f,h*.056f))game.setMusicOn(!game.musicOn);
+                else if(within(x,y,w*.43f,h*.785f,w*.18f,h*.056f))game.setCloudsOn(!game.cloudsOn);
+                else if(Math.abs(y-h*.54f)<h*.050f){sliderId=id;sliderWhich=0;applySlider(x,w,0);}
+                else if(Math.abs(y-h*.70f)<h*.050f){sliderId=id;sliderWhich=1;applySlider(x,w,1);}
             } else if(within(x,y,w/2,dp(28),dp(35),dp(29))) {
                 game.pause();
             } else if(x < w*.35f && y>h*.38f && moveId<0) {
