@@ -31,6 +31,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private RockModel rocks;
     private int rockProgram,rockTexture;
     private TreeModel broadleaf,pines;
+    // Solas v3: geometria simplificada ate 2500m e LODs por especie.
+    private TreeLodRenderer treeLods;
+    private MeshGpu farGround,nextFarGround;
+    private FarWorld farWorld;
+    private float eclipse=0f,celestialTime=0f;
+    private final float[] moonDir=new float[3];
+    private final float[] lowCloudDiscs=new float[16];
+    private int lowCloudUpdate=0;
     private GrassModel grasses;
     private int grassP,terrainDirt,terrainMiddle,terrainGrass;
     private boolean hasTerrainTextures=false;
@@ -56,8 +64,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private final float[] collisionPoint=new float[2];
     private static final class BuildResult {
         final float x,z;final World.Mesh ground;final World.Decoration decoration;
-        BuildResult(float x,float z,World.Mesh m,World.Decoration d){
-            this.x=x;this.z=z;this.ground=m;this.decoration=d;
+        final FarWorld far;
+        BuildResult(float x,float z,World.Mesh m,World.Decoration d,FarWorld far){
+            this.x=x;this.z=z;this.ground=m;this.decoration=d;this.far=far;
         }
     }
     private int dustVao,dustVbo,dustCount;
@@ -115,7 +124,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
             pines=new TreeModel(context,"arvore-2.glb");
-        } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores GLB",ex);}
+            treeLods=new TreeLodRenderer(context,broadleaf,pines);
+        } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores/LODs GLB",ex);}
         makeDust();
         baseX=99999f;baseZ=99999f;
         lastFrame=System.nanoTime();
@@ -130,13 +140,19 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         bloomA=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
         bloomB=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
         // Nuvens alem de 1 km: aumentar clipping sem aumentar o raio do terreno.
-        Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,2200f);
+        Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,4300f);
     }
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
+        if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
+        eclipse=CelestialCycle.eclipse(celestialTime);
+        CelestialCycle.moonDirection(celestialTime,SUN,moonDir);
+        if(++lowCloudUpdate%24==0 && game.cloudsOn)
+            CloudModel.fillLowCloudShadows(x,z,lowCloudDiscs);
+        if(!game.cloudsOn)java.util.Arrays.fill(lowCloudDiscs,0f);
         GrassDayCycle.color(time,grassTint);
         float targetClouds=game.cloudsOn?1f:0f;
         cloudVisibility+=(targetClouds-cloudVisibility)*(1f-(float)Math.exp(-dt*2.7f));
@@ -150,11 +166,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             if(uploadStage==0){nextGround=new MeshGpu(queuedWorld.ground);uploadStage++;}
             else if(uploadStage==1){nextObjects=new MeshGpu(queuedWorld.decoration.objects);uploadStage++;}
             else if(uploadStage==2){nextShadows=new MeshGpu(queuedWorld.decoration.shadows);uploadStage++;}
+            else if(uploadStage==3){nextFarGround=new MeshGpu(queuedWorld.far.ground);uploadStage++;}
             else {
                 if(ground!=null)ground.destroy();
                 if(objects!=null)objects.destroy();
                 if(shadows!=null)shadows.destroy();
+                if(farGround!=null)farGround.destroy();
                 ground=nextGround;objects=nextObjects;shadows=nextShadows;
+                farGround=nextFarGround;farWorld=queuedWorld.far;
                 activeDecoration=queuedWorld.decoration;
                 baseX=queuedWorld.x;baseZ=queuedWorld.z;
                 worldRadius=Math.round(nextWorldRadius);
@@ -173,7 +192,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             pendingWorldRevision=game.worldRevision;
             nextWorldRadius=radius;
             worldWorker.execute(()->{
-                try{completedWorld=new BuildResult(cx,cz,World.ground(cx,cz,radius),World.decorate(cx,cz,radius));}
+                try{
+                    World.Mesh near=World.ground(cx,cz,radius);
+                    World.Decoration decoration=World.decorate(cx,cz,radius);
+                    FarWorld distant=FarWorld.build(cx,cz,radius);
+                    completedWorld=new BuildResult(cx,cz,near,decoration,distant);
+                }
                 catch(Throwable e){Log.e("SolPixel","Terreno async",e);buildingWorld=false;}
             });
         }
@@ -272,6 +296,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glDepthMask(false);
         GLES30.glUseProgram(skyP);
         v3(skyP,"uForward",forward);v3(skyP,"uRight",right);v3(skyP,"uUp",up);v3(skyP,"uSun",SUN);
+        v3(skyP,"uMoonDir",moonDir);f1(skyP,"uEclipse",eclipse);
         f1(skyP,"uAspect",sceneW/(float)sceneH);
         f1(skyP,"uFov",(float)Math.tan(Math.toRadians(67)/2));
         fullTriangle();
@@ -293,9 +318,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         i1(meshP,"uTerrainGrass",4);
         f1(meshP,"uHasTerrainTextures",hasTerrainTextures?1f:0f);
         v3(meshP,"uGrassDayTint",grassTint);
-        f1(meshP,"uDrawDistance",game.renderDistance);
+        f1(meshP,"uDrawDistance",FarWorld.HORIZON);
+        f1(meshP,"uEclipse",eclipse);
+        GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
         texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
         f1(meshP,"uHasRockSurface",rockTexture!=0?1f:0f);
+        // Anel externo compartilha exatamente a borda do solo proximo.
+        if(farGround!=null)farGround.draw();
         if(ground!=null)ground.draw();
         GLES30.glEnable(GLES30.GL_BLEND);
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA,GLES30.GL_ONE_MINUS_SRC_ALPHA);
@@ -310,7 +339,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(rockProgram,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(rockProgram,"uEye"),x,eyeY,z);
             v3(rockProgram,"uSun",SUN);
-            f1(rockProgram,"uDrawDistance",game.renderDistance);
+            f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
+            f1(rockProgram,"uEclipse",eclipse);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
             rocks.drawCulled(rockProgram,activeDecoration.rockInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
@@ -320,10 +350,18 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
-            f1(treeP,"uDrawDistance",game.renderDistance);
+            f1(treeP,"uDrawDistance",FarWorld.HORIZON);
+            f1(treeP,"uEclipse",eclipse);
             bindForestShadow(treeP);
-            broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
-            pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
+            if(treeLods!=null){
+                treeLods.draw(treeP,activeDecoration.broadleafInstances,activeDecoration.pineInstances,
+                    farWorld==null?null:farWorld.normalTrees,
+                    farWorld==null?null:farWorld.giantTrees,
+                    x,z,forward[0],forward[2]);
+            } else {
+                broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
+                pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
+            }
         }
         // Cartoes cruzados com alpha cutout: sem transparencia ordenada, sem colisao.
         if(grasses!=null && activeDecoration!=null){
@@ -332,6 +370,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUseProgram(grassP);
             GLES30.glUniformMatrix4fv(loc(grassP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
+            f1(grassP,"uEclipse",eclipse);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
                          time,x,z,moveVelocityX,moveVelocityZ);
         }
@@ -340,6 +379,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUseProgram(cloudP);
             GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
             v3(cloudP,"uSun",SUN);
+            f1(cloudP,"uEclipse",eclipse);
+            GLES30.glUniform3f(loc(cloudP,"uEye"),x,eyeY,z);
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
             clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
         }
@@ -405,6 +446,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             solar=forwardFactor*edgeFactor;
         }
         f1(finalP,"uSunVisible",solar);
+        f1(finalP,"uEclipse",eclipse);
         f1(finalP,"uForestNear",forestShadows!=null && forestShadows.ready()?forestNear:0f);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
@@ -516,12 +558,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER,mesh.vertices.length*4,f,GLES30.GL_STATIC_DRAW);
             GLES30.glBindBuffer(GLES30.GL_ELEMENT_ARRAY_BUFFER,ibo);
             GLES30.glBufferData(GLES30.GL_ELEMENT_ARRAY_BUFFER,count*2,ix,GLES30.GL_STATIC_DRAW);
-            int stride=9*4;
-            for(int i=0;i<4;i++)GLES30.glEnableVertexAttribArray(i);
+            int stride=10*4;
+            for(int i=0;i<5;i++)GLES30.glEnableVertexAttribArray(i);
             GLES30.glVertexAttribPointer(0,3,GLES30.GL_FLOAT,false,stride,0);
             GLES30.glVertexAttribPointer(1,3,GLES30.GL_FLOAT,false,stride,12);
             GLES30.glVertexAttribPointer(2,2,GLES30.GL_FLOAT,false,stride,24);
             GLES30.glVertexAttribPointer(3,1,GLES30.GL_FLOAT,false,stride,32);
+            GLES30.glVertexAttribPointer(4,1,GLES30.GL_FLOAT,false,stride,36);
             GLES30.glBindVertexArray(0);
         }
         void draw(){if(count<=0)return;GLES30.glBindVertexArray(vao);GLES30.glDrawElements(GLES30.GL_TRIANGLES,count,GLES30.GL_UNSIGNED_SHORT,0);GLES30.glBindVertexArray(0);}

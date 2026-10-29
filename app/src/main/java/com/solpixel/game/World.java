@@ -97,7 +97,13 @@ public final class World {
         float h=height(x,z);
         float slope=Math.abs(height(x+3,z)-height(x-3,z))+
                     Math.abs(height(x,z+3)-height(x,z-3));
-        float altitude=1f-smooth(76,120,h);
+        // Solas v3: provincias umidas podem colonizar cumes e platos amplos,
+        // mas outras montanhas continuam sem floresta. Nenhuma altitude e veto fixo.
+        float lowAltitude=1f-smooth(76,138,h);
+        float mountainClimate=smooth(-.25f,.25f,noise(x*.00145f+821f,z*.00145f-493f));
+        float summitOpenings=1f-.78f*smooth(.23f,.57f,noise(x*.0042f-253f,z*.0042f+117f));
+        float mountainWood=smooth(90f,145f,h)*mountainClimate*summitOpenings;
+        float altitude=Math.max(lowAltitude,mountainWood);
         float steep=1f-smooth(9,23,slope);
         float spawn=smooth(34,83,(float)Math.hypot(x,z));
         return Math.max(0,Math.min(1,coverage*steep*altitude*spawn));
@@ -122,7 +128,11 @@ public final class World {
             float dz=height(wx,wz-1)-height(wx,wz+1);
             float len=(float)Math.sqrt(dx*dx+dz*dz+4);
             // Fracao do atributo material codifica o sombreamento de vegetacao.
-            vert(v,wx,h,wz,dx/len,2/len,dz/len,wx*.21f,wz*.21f,forestDensity(wx,wz)*.95f);
+            // O mesmo campo geologico dirige o solo CINZA e os blocos GLB.
+            float grad=(float)Math.hypot(dx,dz)*.5f;
+            float stone=TerrainGeology.rockExposure(wx,wz,grad,h);
+            vert(v,wx,h,wz,dx/len,2/len,dz/len,wx*.21f,wz*.21f,
+                 forestDensity(wx,wz)*.95f,stone);
         }
         for(int z=0;z<SAMPLES-1;z++)for(int x=0;x<SAMPLES-1;x++){
             int a=z*SAMPLES+x,b=a+SAMPLES;
@@ -215,71 +225,111 @@ public final class World {
             dest.add(tree.x);dest.add(tree.y);dest.add(tree.z);dest.add(tree.scale);
             dest.add(tree.cos);dest.add(tree.sin);dest.add(density);dest.add(tilt);
         }
-        // Solas Rocks v1: conjuntos geologicos, LOD e chance nao nula na planicie.
-        // Mais rochas em declives, mas provincia geologica reduz ou zera picos verdes.
+        // Solas Geology v2 - os afloramentos usam a mesma mascara das manchas do solo.
+        // Todas as celulas usam coordenadas globais: nenhuma muda ao caminhar.
         FloatList rocks=new FloatList();
-        final float rockGrid=14f;
-        for(int rz=(int)Math.floor((cz-range)/rockGrid);rz<=(int)Math.ceil((cz+range)/rockGrid);rz++)
-            for(int rx=(int)Math.floor((cx-range)/rockGrid);rx<=(int)Math.ceil((cx+range)/rockGrid);rx++){
-                float px=(rx+.5f)*rockGrid+hash(rx*43+77,rz*41-71)*rockGrid*.43f;
-                float pz=(rz+.5f)*rockGrid+hash(rx*37-44,rz*53+59)*rockGrid*.43f;
-                if(Math.abs(px-cx)>range||Math.abs(pz-cz)>range)continue;
-                float chance=TerrainGeology.rockDensity(px,pz);
+        final float singleGrid=31f;
+        for(int rz=(int)Math.floor((cz-range)/singleGrid)-1;rz<=(int)Math.ceil((cz+range)/singleGrid)+1;rz++)
+            for(int rx=(int)Math.floor((cx-range)/singleGrid)-1;rx<=(int)Math.ceil((cx+range)/singleGrid)+1;rx++){
+                float px=(rx+.5f)*singleGrid+hash(rx*43+77,rz*41-71)*singleGrid*.43f;
+                float pz=(rz+.5f)*singleGrid+hash(rx*37-44,rz*53+59)*singleGrid*.43f;
+                float dx=px-cx,dz=pz-cz;
+                if(dx*dx+dz*dz>range*range)continue;
+                float grad=TerrainGeology.slope(px,pz);
+                float chance=TerrainGeology.isolatedChance(px,pz,grad);
                 if(n01(rx*17+51,rz*23-31)>chance)continue;
-                float size=(.55f+1.6f*n01(rx*29+3,rz*37+9))*TerrainGeology.rockScale(px,pz);
-                if(!TerrainGeology.rockSupported(px,pz,size))continue;
-                float scaleY=size*(.45f+.80f*n01(rx*59-5,rz*61+7));
+                float scale=.7f+2.7f*n01(rx*29+3,rz*37+9);
+                if(!TerrainGeology.rockSupported(px,pz,scale))continue;
+                float sy=scale*(.52f+.58f*n01(rx*59-5,rz*61+7));
                 float angle=n01(rx*31+11,rz*37+19)*6.2831853f;
                 int family=(int)(n01(rx*41-7,rz*47+13)*5f);
-                rock(rocks,px,height(px,pz)-scaleY*.17f,pz,size,scaleY,
-                     size*(.74f+.42f*n01(rx*43+9,rz*31+19)),angle,family);
-                // Cascalhos agrupados no pe do paredao, nao distribuicao uniforme.
-                if(chance>.21f && n01(rx*67+5,rz*71-9)<chance*.87f){
-                    for(int j=0;j<2;j++){
-                        float ang=n01(rx*19+j*41,rz*23-j*37)*6.2831853f;
-                        float r=size*(.8f+1.4f*n01(rx*29+j*17,rz*13+j*11));
-                        float xx=px+(float)Math.cos(ang)*r,zz=pz+(float)Math.sin(ang)*r;
-                        float s=size*(.30f+.38f*n01(rx*23+j*7,rz*31+j*13));
-                        if(TerrainGeology.rockSupported(xx,zz,s))
-                            rock(rocks,xx,height(xx,zz)-s*.14f,zz,s,s*.7f,s,ang,family);
-                    }
+                rock(rocks,px,height(px,pz)-sy*.16f,pz,scale,sy,
+                     scale*(.79f+.32f*n01(rx*43+9,rz*31+19)),angle,family);
+            }
+        // Aglomerados grandes, alongados no sentido da subida da montanha.
+        // O centro de um grupo pode ficar FORA do raio: a borda ainda entra no mundo.
+        final float clusterGrid=88f, clusterReach=135f;
+        for(int rz=(int)Math.floor((cz-range-clusterReach)/clusterGrid)-1;
+                rz<=(int)Math.ceil((cz+range+clusterReach)/clusterGrid)+1;rz++)
+            for(int rx=(int)Math.floor((cx-range-clusterReach)/clusterGrid)-1;
+                    rx<=(int)Math.ceil((cx+range+clusterReach)/clusterGrid)+1;rx++){
+                float centerX=(rx+.5f)*clusterGrid+hash(rx*13+71,rz*11-39)*clusterGrid*.35f;
+                float centerZ=(rz+.5f)*clusterGrid+hash(rx*17-29,rz*19+37)*clusterGrid*.35f;
+                float gradient=TerrainGeology.slope(centerX,centerZ);
+                float patch=TerrainGeology.rockExposure(centerX,centerZ,gradient,height(centerX,centerZ));
+                if(gradient<.19f||patch<.13f)continue;
+                float probability=Math.min(.88f,(patch-.09f)*1.18f);
+                if(n01(rx*71+7,rz*67-11)>probability)continue;
+                // Derivada aponta para a subida; a faixa se estende nas duas direcoes.
+                float gx=height(centerX+4f,centerZ)-height(centerX-4f,centerZ);
+                float gz=height(centerX,centerZ+4f)-height(centerX,centerZ-4f);
+                float length=(float)Math.hypot(gx,gz);
+                if(length<.001f)continue;
+                float uphillX=gx/length,uphillZ=gz/length;
+                float acrossX=-uphillZ,acrossZ=uphillX;
+                float extent=49f+68f*patch;
+                float width=12f+20f*patch;
+                int stones=11+(int)(31f*patch)+ (int)(11f*n01(rx*37+4,rz*31-8));
+                for(int i=0;i<stones;i++){
+                    int sx=rx*191+i*37,sz=rz*197-i*41;
+                    float along=(n01(sx+3,sz-7)-n01(sx-13,sz+19))*extent;
+                    float cross=(n01(sx+17,sz+31)-n01(sx-5,sz-11))*width;
+                    float px=centerX+uphillX*along+acrossX*cross;
+                    float pz=centerZ+uphillZ*along+acrossZ*cross;
+                    float dx=px-cx,dz=pz-cz;
+                    if(dx*dx+dz*dz>range*range)continue;
+                    float local=TerrainGeology.rockExposure(px,pz);
+                    // O aglomerado respeita os contornos da mancha cinza.
+                    if(local<.105f || (local<.20f && n01(sx+83,sz-67)>.32f))continue;
+                    float maxSide=1f+4.8f*n01(sx+53,sz-61);
+                    maxSide*=.78f+.43f*TerrainGeology.rockScale(px,pz);
+                    if(i%11==0)maxSide*=1.65f; // blocos âncora maiores.
+                    if(!TerrainGeology.rockSupported(px,pz,maxSide))continue;
+                    float sy=maxSide*(.42f+.82f*n01(sx-17,sz+23));
+                    float angle=n01(sx+47,sz+17)*6.2831853f;
+                    int family=(int)(n01(sx-41,sz+29)*5f);
+                    rock(rocks,px,height(px,pz)-sy*.21f,pz,maxSide,sy,
+                         maxSide*(.8f+.3f*n01(sx+5,sz+13)),angle,family);
                 }
             }
-        // Megalitos raros: pilares, aglomeracoes, picos e arcos de blocos sobrepostos.
-        // Gerados por CELULAS GLOBAIS; nao repetem nem mudam ao caminhar.
-        final float structureGrid=156f;
-        for(int rz=(int)Math.floor((cz-range)/structureGrid)-1;rz<=(int)Math.ceil((cz+range)/structureGrid)+1;rz++)
-            for(int rx=(int)Math.floor((cx-range)/structureGrid)-1;rx<=(int)Math.ceil((cx+range)/structureGrid)+1;rx++){
+        // Grandes formacoes passam a surgir mais, porem nunca uniformemente.
+        final float structureGrid=124f, structureReach=38f;
+        for(int rz=(int)Math.floor((cz-range-structureReach)/structureGrid)-1;
+                rz<=(int)Math.ceil((cz+range+structureReach)/structureGrid)+1;rz++)
+            for(int rx=(int)Math.floor((cx-range-structureReach)/structureGrid)-1;
+                    rx<=(int)Math.ceil((cx+range+structureReach)/structureGrid)+1;rx++){
                 float xx=(rx+.5f)*structureGrid+hash(rx*13+71,rz*11-39)*structureGrid*.29f;
                 float zz=(rz+.5f)*structureGrid+hash(rx*17-29,rz*19+37)*structureGrid*.29f;
-                if(Math.abs(xx-cx)>range-18f||Math.abs(zz-cz)>range-18f)continue;
-                float steep=TerrainGeology.slope(xx,zz),density=TerrainGeology.rockDensity(xx,zz);
-                float accept=density*(steep>.28f?.48f:.075f);
+                float patch=TerrainGeology.rockExposure(xx,zz),steep=TerrainGeology.slope(xx,zz);
+                float accept=.006f+(steep>.21f ? .025f+.46f*smooth(.13f,.70f,patch) : .004f);
                 if(n01(rx*73+19,rz*79-23)>accept)continue;
-                if(!TerrainGeology.rockSupported(xx,zz,8f))continue;
-                float y=height(xx,zz),angle=n01(rx*31-19,rz*29+9)*6.2831853f;
+                if(!TerrainGeology.rockSupported(xx,zz,7f))continue;
+                float angle=n01(rx*31-19,rz*29+9)*6.2831853f;
                 float kind=n01(rx*23+51,rz*43-79);
-                if(kind<.26f && steep>.25f){ // arco baixo em pedra, formado por blocos sobrepostos
+                if(kind<.16f && patch>.28f && steep>.30f){
+                    // Arco experimental: somente regioes de afloramento e com pilares de apoio.
                     float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
                     for(int i=0;i<9;i++){
                         float t=i/8f,offset=(t-.5f)*19f;
                         float px=xx+c*offset,pz=zz+s*offset;
-                        float yy=height(px,pz)-.5f+10.0f*(float)Math.sin(Math.PI*t);
+                        float baseY=height(px,pz);
+                        float yy=baseY-.8f+10.0f*(float)Math.sin(Math.PI*t);
                         float sx=i==0||i==8?4.7f:3.5f;
-                        // Arco visual: pedras grandes interceptam os vizinhos.
                         rock(rocks,px,yy,pz,sx,5.6f,3.2f,angle,i%3);
                     }
-                } else if(kind<.68f){ // pilares de rocha e picos escarpados
-                    int n=2+(int)(n01(rx*43-13,rz*31+17)*3f);
-                    for(int i=0;i<n;i++){
+                } else if(kind<.81f && steep>.21f){
+                    // Pilares mais frequentes; aglomeracoes escalonadas de pedras verticais.
+                    int number=2+(int)(n01(rx*43-13,rz*31+17)*4f);
+                    for(int i=0;i<number;i++){
                         float theta=angle+i*2.39996f;
-                        float px=xx+(float)Math.cos(theta)*i*3.9f;
-                        float pz=zz+(float)Math.sin(theta)*i*3.9f;
-                        float h=5f+16f*n01(rx*41+i*11,rz*47-i*7);
-                        rock(rocks,px,height(px,pz)-.3f,pz,2.8f+i*.3f,h,3.1f,theta,i%3);
+                        float px=xx+(float)Math.cos(theta)*i*3.7f;
+                        float pz=zz+(float)Math.sin(theta)*i*3.7f;
+                        float h=8f+25f*n01(rx*41+i*11,rz*47-i*7);
+                        rock(rocks,px,height(px,pz)-.5f,pz,2.7f+i*.35f,h,3.2f,theta,i%3);
                     }
-                } else { // megalito isolado, inclusive em planicies raramente
-                    rock(rocks,xx,y-1.8f,zz,7f,9f,8.2f,angle,0);
+                } else {
+                    // Monolitos esparsos; alguns tambem surgem em areas abertas.
+                    rock(rocks,xx,height(xx,zz)-1.9f,zz,5.9f,8.4f,7.1f,angle,0);
                 }
             }
         // SolPixel vegetation v0.11: ilhas de grama, trigo em campos extensos,
@@ -453,11 +503,16 @@ public final class World {
         }
         position[0]=px;position[1]=pz;
     }
+    // Solas Geology v2: stride 10; solo recebe intensidade de rocha,
+    // demais geometrias recebem zero e mantem seus materiais originais.
     static void vert(FloatList v,float x,float y,float z,float nx,float ny,float nz,float u,float w,float mat){
-        v.add(x);v.add(y);v.add(z);v.add(nx);v.add(ny);v.add(nz);v.add(u);v.add(w);v.add(mat);
+        vert(v,x,y,z,nx,ny,nz,u,w,mat,0f);
+    }
+    static void vert(FloatList v,float x,float y,float z,float nx,float ny,float nz,float u,float w,float mat,float stone){
+        v.add(x);v.add(y);v.add(z);v.add(nx);v.add(ny);v.add(nz);v.add(u);v.add(w);v.add(mat);v.add(stone);
     }
     static void face(FloatList v,ShortList ids,float[] corners,float[] n,float mat){
-        int base=v.n/9;
+        int base=v.n/10;
         vert(v,corners[0],corners[1],corners[2],n[0],n[1],n[2],0,0,mat);
         vert(v,corners[3],corners[4],corners[5],n[0],n[1],n[2],1,0,mat);
         vert(v,corners[6],corners[7],corners[8],n[0],n[1],n[2],1,1,mat);
@@ -476,7 +531,7 @@ public final class World {
     static void shadow(FloatList v,ShortList ids,float x,float z,float length,float width){
         float dx=-SUN_X*length,dz=-SUN_Z*length;
         float sideX=-dz/length*width,sideZ=dx/length*width;
-        int base=v.n/9;
+        int base=v.n/10;
         float[][] corners={{x+sideX,z+sideZ},{x-sideX,z-sideZ},{x+dx-sideX,z+dz-sideZ},{x+dx+sideX,z+dz+sideZ}};
         for(float[] a:corners)vert(v,a[0],height(a[0],a[1])+.085f,a[1],0,1,0,0,0,5);
         ids.add(base);ids.add(base+1);ids.add(base+2);

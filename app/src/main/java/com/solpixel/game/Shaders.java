@@ -8,6 +8,7 @@ final class Shaders {
         layout(location=1) in vec3 aNormal;
         layout(location=2) in vec2 aUv;
         layout(location=3) in float aMaterial;
+        layout(location=4) in float aStoneMask;
         uniform mat4 uMvp;
         uniform mat4 uLightVP;
         uniform vec3 uEye;
@@ -19,6 +20,7 @@ final class Shaders {
         out float vForest;
         out float vDist;
         out float vPatch;
+        out float vStoneMask;
         float hashGround(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         void main(){
             gl_Position=uMvp*vec4(aPos,1.0);
@@ -28,6 +30,7 @@ final class Shaders {
             vForest=fract(aMaterial);
             vPatch=mix(hashGround(floor(aPos.xz*.067)),
                        hashGround(floor(aPos.xz*.137+vec2(13.7,29.1))),.35);
+            vStoneMask=aStoneMask;
             vDist=distance(aPos,uEye);
         }
         """;
@@ -41,6 +44,7 @@ final class Shaders {
         in float vForest;
         in float vDist;
         in float vPatch;
+        in float vStoneMask;
         in vec4 vLightCoord;
         uniform sampler2D uShadowMap;
         uniform float uShadowEnabled;
@@ -52,7 +56,20 @@ final class Shaders {
         uniform vec3 uGrassDayTint;
         uniform vec3 uSun;
         uniform float uDrawDistance;
+        uniform float uEclipse;
+        uniform vec4 uCloudDiscs[4];
         out vec4 outColor;
+        float cloudShadow(vec2 px){
+            float darkness=0.0;
+            for(int k=0;k<4;k++){
+                vec4 disc=uCloudDiscs[k];
+                if(disc.z>.001){
+                    float d=length(px-disc.xy);
+                    darkness=max(darkness,(1.0-smoothstep(disc.z*.37,disc.z*1.42,d))*disc.w);
+                }
+            }
+            return 1.0-darkness;
+        }
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
         float sunlightFraction(vec4 lightCoord,float distanceFromEye){
             if(uShadowEnabled<.5 || distanceFromEye>115.0)return 1.0;
@@ -101,8 +118,9 @@ final class Shaders {
                               texture(uRockSurfaceTex,vPos.xy*.20).rgb*weight.z;
                     float rockGray=dot(rTex,vec3(.33333));
                     vec3 rockColor=mix(vec3(.26,.25,.25),vec3(.66,.65,.62),rockGray);
-                    float steep=smoothstep(.23,.61,1.0-n.y);
-                    float coverage=steep*(.43+.57*vPatch);
+                    // O atributo ja inclui inclinacao e provincias rochosas.
+                    // Sem padrao generico em TODA parede: pedra so onde o campo indica.
+                    float coverage=smoothstep(.105,.57,vStoneMask)*(.83+.17*vPatch);
                     albedo=mix(albedo,rockColor,coverage);
                 }
             } else if(vMat==1){
@@ -122,12 +140,13 @@ final class Shaders {
             // Sol real bloqueado pelos GLB proximos + ceu ocluido pelo dossel.
             float lightFraction=sunlightFraction(vLightCoord,vDist);
             ambient*=1.0-clamp(vForest,0.0,1.0)*.36;
-            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction;
+            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction*cloudShadow(vPos.xz);
             vec3 color=albedo*(ambient+direct);
             color*=1.0-clamp(vForest,0.0,1.0)*.17;
             // solpixel-v08: nevoa atmosferica desde meia distancia.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
+            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+bayer*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -164,7 +183,7 @@ final class Shaders {
         in vec3 vNormal,vLocal;
         in float vLight,vDist;
         uniform sampler2D uRockTex;
-        uniform float uDrawDistance;
+        uniform float uDrawDistance,uEclipse;
         out vec4 outColor;
         void main(){
             vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
@@ -175,7 +194,8 @@ final class Shaders {
             vec3 stone=mix(vec3(.30,.30,.29),vec3(.65,.64,.61),grain);
             float ambient=.34+.12*clamp(vNormal.y,0.0,1.0);
             vec3 color=stone*(ambient+vec3(1.03,.99,.88)*vLight*.75);
-            color=mix(color,vec3(.82,.92,1.0),smoothstep(uDrawDistance*.28,uDrawDistance*.9,vDist)*.95);
+            color=mix(color,vec3(.82,.92,1.0),smoothstep(uDrawDistance*.28,uDrawDistance*.9,vDist)*.87);
+            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -199,25 +219,29 @@ final class Shaders {
         #version 300 es
         precision highp float;
         in vec2 vUv;
-        uniform vec3 uForward,uRight,uUp,uSun;
-        uniform float uAspect,uFov;
+        uniform vec3 uForward,uRight,uUp,uSun,uMoonDir;
+        uniform float uAspect,uFov,uEclipse;
         out vec4 outColor;
         void main(){
-            // APENAS gradiente azul: sem panorama, nuvens artificiais, disco solar ou ruido.
             vec2 q=(vUv*2.0-1.0)*vec2(uAspect,1.0)*uFov;
             vec3 dir=normalize(uForward+q.x*uRight+q.y*uUp);
-            float altitude=smoothstep(-.22,.85,dir.y);
-            vec3 horizon=vec3(.82,.92,1.0);
-            vec3 zenith=vec3(.32,.59,.89);
-            // SolPixel v0.10: 15% mais escuro no ceu, sol preservado.
-            vec3 sky=mix(horizon,zenith,altitude)*.85;
-            // solpixel-v08: disco solar e corona reais no shader de ceu.
+            float alt=smoothstep(-.22,.85,dir.y);
+            vec3 horizon=mix(vec3(.82,.92,1.0),vec3(.011,.027,.065),uEclipse);
+            vec3 zenith=mix(vec3(.32,.59,.89),vec3(.004,.009,.032),uEclipse);
+            vec3 sky=mix(horizon,zenith,alt)*.85;
             float towards=dot(dir,normalize(uSun));
-            float disc=smoothstep(.99920,.99985,towards);
             float innerHalo=pow(max(towards,0.0),75.0);
             float outerHalo=pow(max(towards,0.0),13.0);
-            sky+=vec3(1.0,.73,.44)*(innerHalo*.40+outerHalo*.075);
+            float disc=smoothstep(.99920,.99985,towards);
+            sky+=vec3(1.0,.73,.44)*(innerHalo*.40+outerHalo*.075)*mix(1.0,.40,uEclipse);
             sky=mix(sky,vec3(2.0,1.70,1.24),disc);
+            // Lua/satelite sempre visivel como disco visual, sem malha 3D.
+            float moonDot=dot(dir,normalize(uMoonDir));
+            float moon=smoothstep(.99965,.99982,moonDot);
+            float eclipseRing=(1.0-smoothstep(.99965,.99981,moonDot))*
+                              smoothstep(.99925,.99957,moonDot);
+            sky+=vec3(1.45,.88,.43)*eclipseRing*uEclipse*.72;
+            sky=mix(sky,mix(vec3(.84,.88,.94),vec3(.002,.004,.011),uEclipse),moon);
             outColor=vec4(sky,1.0);
         }
         """;
@@ -257,10 +281,10 @@ final class Shaders {
         uniform sampler2D uScene,uDepth,uBloom;
         uniform vec2 uTexel,uSunUv;
         uniform float uSunVisible;
-        uniform float uForestNear;
+        uniform float uForestNear,uEclipse;
         out vec4 outColor;
         float linearDepth(float d){
-            float near=.12,far=2200.0,z=d*2.0-1.0;
+            float near=.12,far=4300.0,z=d*2.0-1.0;
             return 2.0*near*far/(far+near-z*(far-near));
         }
         // Usar profundidade para separar ceu de nuvens e montanhas:
@@ -317,6 +341,7 @@ final class Shaders {
             }
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));
+            color*=mix(1.0,.68,uEclipse); // mantem halo do eclipse, mas noite escura
             float vignette=1.0-.20*dot(vUv-.5,vUv-.5);
             outColor=vec4(color*vignette,1.0);
         }
@@ -431,6 +456,7 @@ final class Shaders {
         uniform float uShadowEnabled;
         uniform vec3 uSun;
         uniform float uDrawDistance;
+        uniform float uEclipse;
         uniform float uLeaf;
         out vec4 outColor;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
@@ -457,6 +483,7 @@ final class Shaders {
             ambient*=1.0-vForest*.30;
             float canopy=1.-vForest*(uLeaf>.5?.30:.37);
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
+            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
@@ -514,7 +541,7 @@ final class Shaders {
         flat in int vKind;
         uniform sampler2D uGrassAtlas;
         uniform vec3 uGrassTint;
-        uniform float uGrassLimit;
+        uniform float uGrassLimit,uEclipse;
         out vec4 outColor;
         void main(){
             vec4 tex=texture(uGrassAtlas,vUv);
@@ -532,6 +559,7 @@ final class Shaders {
             vec3 dayTint=mix(vec3(1.0),uGrassTint,influence);
             vec3 color=tex.rgb*dayTint;
             color*=mix(.83,1.15,clamp(vShade,0.0,1.0));
+            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;
@@ -543,13 +571,14 @@ final class Shaders {
         layout(location=1) in vec3 aNormal;
         uniform mat4 uMvp;
         uniform vec4 uCloudPosScale;
-        uniform vec3 uCloudCenter;
+        uniform vec3 uCloudCenter,uEye;
         out vec3 vLocal,vNormal;
-        out float vElevation;
+        out float vElevation,vCloudDistance;
         void main(){
             vec3 pos=(aPos-uCloudCenter)*uCloudPosScale.w+uCloudPosScale.xyz;
             vLocal=aPos;vNormal=aNormal;
             vElevation=pos.y;
+            vCloudDistance=distance(pos,uEye);
             gl_Position=uMvp*vec4(pos,1.0);
         }
         """;
@@ -557,10 +586,10 @@ final class Shaders {
         #version 300 es
         precision highp float;
         in vec3 vLocal,vNormal;
-        in float vElevation;
+        in float vElevation,vCloudDistance;
         uniform sampler2D uCloudMask;
         uniform vec3 uSun;
-        uniform float uAlpha;
+        uniform float uAlpha,uEclipse;
         out vec4 outColor;
         float bayer(vec2 pixel){
             // Matriz Bayer 4x4 fixa. O padrao nao varia no tempo: sem cintilacao.
@@ -574,7 +603,9 @@ final class Shaders {
             // Na visibilidade maxima a nuvem permanece 90% opaca.
             float visibility=clamp(uAlpha/.90,0.0,1.0);
             float coverage=smoothstep(0.0,1.0,visibility);
-            if(dither>coverage)discard;
+            // Dither em longa distancia continua discernivel e apaga pixels.
+            float farDither=smoothstep(1400.0,3700.0,vCloudDistance);
+            if(dither>coverage*mix(1.0,.70,farDither))discard;
             vec3 n=normalize(vNormal);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
             float mask=texture(uCloudMask,uv*.95).r;
@@ -587,6 +618,8 @@ final class Shaders {
             vec3 color=mix(shadowBlueGray,sunWhite,ramp);
             color*=mix(.91,1.04,mask);
             color=min(color*1.10,vec3(1.0)); // +10% de claridade
+            color=mix(color,vec3(.65,.77,.91),farDither*.33);
+            color=mix(color,color*vec3(.10,.20,.48),uEclipse*.96);
             color=floor(color*47.0+dither*.60)/47.0;
             outColor=vec4(color,.90);
         }

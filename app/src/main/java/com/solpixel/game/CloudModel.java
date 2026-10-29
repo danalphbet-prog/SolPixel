@@ -109,32 +109,71 @@ final class CloudModel {
         if(intro>.001f){
             // Referencia fixa distante, acima do ponto de vista inicial.
             float fixedDist=(float)Math.hypot(350f-x,-1120f-z);
-            float fixedFade=fade(440f,650f,fixedDist)*(1f-fade(1420f,1750f,fixedDist));
+            float fixedFade=fade(340f,650f,fixedDist)*(1f-fade(3150f,3900f,fixedDist));
             if(fixedFade*intro>.014f)
                 drawOne(meshes[1],pos,center,alpha,350f,340f,-1120f,86f,.90f*intro*fixedFade);
 
             final int cell=420;
             int cx=(int)Math.floor(x/cell),cz=(int)Math.floor(z/cell);
             // A borda de busca fica FORA da banda do fade: sem aparecimento repentino.
-            for(int j=-5;j<=5;j++)for(int i=-5;i<=5;i++){
+            for(int j=-8;j<=8;j++)for(int i=-8;i<=8;i++){
                 int gx=cx+i,gz=cz+j;
-                if(hash(gx*11+7,gz*19-5)>.88f)continue;
+                if(hash(gx*11+7,gz*19-5)>.78f)continue;
                 float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*92f;
                 float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*92f;
                 float dist=(float)Math.hypot(px-x,pz-z);
-                float opacity=.90f*intro*fade(440f,650f,dist)*
-                                          (1f-fade(1420f,1750f,dist));
+                float opacity=.90f*intro*fade(340f,650f,dist)*
+                                          (1f-fade(3150f,3900f,dist));
                 if(opacity<=.014f)continue;
                 int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
                 Mesh mesh=meshes[type];
-                float scale=72f+hash(gx*29,gz*17)*31f;
-                float height=327f+hash(gx*37,gz*41)*67f;
+                float scale=96f+hash(gx*29,gz*17)*48f;
+                float height=cloudHeight(gx,gz);
                 drawOne(mesh,pos,center,alpha,px,height,pz,scale,opacity);
             }
         }
         GLES30.glBindVertexArray(0);
         GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
+    }
+    // Alturas distribuidas pela mesma seed, sem camadas visiveis em bandas.
+    private static float cloudHeight(int gx,int gz){
+        float base=330f+hash(gx*37,gz*41)*102f;
+        float mode=hash(gx*31+13,gz*17-51);
+        if(mode<.28f)return 215f+hash(gx*41-11,gz*29+7)*48f;
+        if(mode>.82f)return 450f+hash(gx*19-37,gz*13+23)*95f;
+        return base;
+    }
+    /** Quatro sombras analiticas locais de nuvens baixas. Nao usa shadow map. */
+    static void fillLowCloudShadows(float eyeX,float eyeZ,float[] out){
+        java.util.Arrays.fill(out,0f);
+        float[] dist=new float[]{Float.MAX_VALUE,Float.MAX_VALUE,Float.MAX_VALUE,Float.MAX_VALUE};
+        final int cell=420;
+        int cx=(int)Math.floor(eyeX/cell),cz=(int)Math.floor(eyeZ/cell);
+        for(int j=-3;j<=3;j++)for(int i=-3;i<=3;i++){
+            int gx=cx+i,gz=cz+j;
+            if(hash(gx*11+7,gz*19-5)>.78f)continue;
+            if(hash(gx*31+13,gz*17-51)>=.28f)continue; // apenas nuvens baixas
+            float px=(gx+.5f)*cell+(hash(gx*13,gz*7)-.5f)*92f;
+            float pz=(gz+.5f)*cell+(hash(gx*7-17,gz*23)-.5f)*92f;
+            float h=cloudHeight(gx,gz);
+            float projection=Math.max(55f,h-World.height(px,pz));
+            // Sombra deslocada pelo angulo da luz solar fixa.
+            float sx=px-.53f/.48f*projection,sz=pz+.47f/.48f*projection;
+            float d2=(sx-eyeX)*(sx-eyeX)+(sz-eyeZ)*(sz-eyeZ);
+            if(d2>650f*650f)continue;
+            int insert=-1;
+            for(int k=0;k<4;k++)if(d2<dist[k]){insert=k;break;}
+            if(insert<0)continue;
+            for(int k=3;k>insert;k--){
+                dist[k]=dist[k-1];
+                for(int q=0;q<4;q++)out[k*4+q]=out[(k-1)*4+q];
+            }
+            dist[insert]=d2;
+            out[insert*4]=sx;out[insert*4+1]=sz;
+            out[insert*4+2]=120f+20f*hash(gx*29,gz*17);
+            out[insert*4+3]=.10f+.045f*hash(gx*13+7,gz*37-17);
+        }
     }
     private static float fade(float start,float end,float value){
         float t=Math.max(0f,Math.min(1f,(value-start)/(end-start)));

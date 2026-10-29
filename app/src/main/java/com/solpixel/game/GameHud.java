@@ -75,7 +75,7 @@ public final class GameHud extends View {
             text(c,"Música ambiente",w*.55f,h*.36f,16,0xFFEAF0F3,false);
             text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.475f,15,0xFFF9E3BE,true);
             drawSlider(c,w*.31f,w*.69f,h*.54f,game.musicVolume);
-            text(c,"DISTÂNCIA  "+game.renderDistance+" m",w*.5f,h*.635f,15,0xFFF9E3BE,true);
+            text(c,"TERRENO  "+game.renderDistance+" m / HORIZONTE 2500 m",w*.5f,h*.635f,13,0xFFF9E3BE,true);
             drawSlider(c,w*.31f,w*.69f,h*.70f,(game.renderDistance-180f)/240f);
             drawCheck(c,w*.33f,h*.785f,game.cloudsOn);
             text(c,"Nuvens 3D",w*.55f,h*.798f,16,0xFFEAF0F3,false);
