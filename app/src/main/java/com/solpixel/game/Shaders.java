@@ -47,6 +47,8 @@ final class Shaders {
         uniform sampler2D uGround;
         uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
         uniform float uHasTerrainTextures;
+        uniform sampler2D uRockSurfaceTex;
+        uniform float uHasRockSurface;
         uniform vec3 uGrassDayTint;
         uniform vec3 uSun;
         uniform float uDrawDistance;
@@ -91,6 +93,18 @@ final class Shaders {
                 albedo=mix(mix(soil,mixed,mid),meadow,green);
                 // Terra praticamente neutra; grama acompanha a temperatura do dia.
                 albedo*=mix(vec3(1.0),uGrassDayTint,smoothstep(.16,.79,lush));
+                // Paredoes expondo rocha em placas, com varias cristas ainda verdes.
+                if(uHasRockSurface>.5){
+                    vec3 weight=pow(abs(n),vec3(4.0));weight/=max(.001,weight.x+weight.y+weight.z);
+                    vec3 rTex=texture(uRockSurfaceTex,vPos.yz*.20).rgb*weight.x+
+                              texture(uRockSurfaceTex,vPos.xz*.20).rgb*weight.y+
+                              texture(uRockSurfaceTex,vPos.xy*.20).rgb*weight.z;
+                    float rockGray=dot(rTex,vec3(.33333));
+                    vec3 rockColor=mix(vec3(.26,.25,.25),vec3(.66,.65,.62),rockGray);
+                    float steep=smoothstep(.23,.61,1.0-n.y);
+                    float coverage=steep*(.43+.57*vPatch);
+                    albedo=mix(albedo,rockColor,coverage);
+                }
             } else if(vMat==1){
                 albedo=vec3(.35,.23,.15);
                 albedo*=.8+.28*hash(floor(vPos.xz*9.0)+floor(vPos.y*7.0));
@@ -119,6 +133,55 @@ final class Shaders {
             outColor=vec4(color,1.0);
         }
         """;
+    // Solas Rocks v1 - Pedras GLB: tri-planar real usando a textura fornecida, iluminacao e LOD instanciado.
+    static final String ROCK_V = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec3 aPos;
+        layout(location=1) in vec3 aNormal;
+        layout(location=2) in vec4 aLocationScaleX;
+        layout(location=3) in vec4 aScaleRot;
+        uniform mat4 uMvp;
+        uniform vec3 uEye,uSun;
+        out vec3 vNormal,vLocal;
+        out float vLight,vDist;
+        void main(){
+            float cs=aScaleRot.z,sn=aScaleRot.w;
+            vec3 p=aPos*vec3(aLocationScaleX.w,aScaleRot.x,aScaleRot.y);
+            vec3 r=vec3(p.x*cs-p.z*sn,p.y,p.x*sn+p.z*cs);
+            vec3 n=vec3(aNormal.x/aLocationScaleX.w,aNormal.y/aScaleRot.x,aNormal.z/aScaleRot.y);
+            vNormal=normalize(vec3(n.x*cs-n.z*sn,n.y,n.x*sn+n.z*cs));
+            vec3 world=aLocationScaleX.xyz+r;
+            vLocal=aPos*4.0;
+            vLight=max(0.0,dot(vNormal,normalize(uSun)));
+            vDist=distance(world,uEye);
+            gl_Position=uMvp*vec4(world,1.0);
+        }
+        """;
+    static final String ROCK_F = """
+        #version 300 es
+        precision highp float;
+        in vec3 vNormal,vLocal;
+        in float vLight,vDist;
+        uniform sampler2D uRockTex;
+        uniform float uDrawDistance;
+        out vec4 outColor;
+        void main(){
+            vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
+            vec3 tex=texture(uRockTex,vLocal.yz).rgb*w.x+
+                     texture(uRockTex,vLocal.xz).rgb*w.y+
+                     texture(uRockTex,vLocal.xy).rgb*w.z;
+            float grain=dot(tex,vec3(.33333));
+            vec3 stone=mix(vec3(.30,.30,.29),vec3(.65,.64,.61),grain);
+            float ambient=.34+.12*clamp(vNormal.y,0.0,1.0);
+            vec3 color=stone*(ambient+vec3(1.03,.99,.88)*vLight*.75);
+            color=mix(color,vec3(.82,.92,1.0),smoothstep(uDrawDistance*.28,uDrawDistance*.9,vDist)*.95);
+            float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
+            color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
+            outColor=vec4(color,1.0);
+        }
+        """;
+
     static final String FULL_V = """
         #version 300 es
         precision highp float;

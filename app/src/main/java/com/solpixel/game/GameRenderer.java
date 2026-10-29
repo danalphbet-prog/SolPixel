@@ -27,6 +27,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int emptyVao;
     private Target scene,bloomA,bloomB;
     private MeshGpu ground,objects,shadows;
+    // Solas Rocks v1: GLBs instanciados com LOD e material de pedra.
+    private RockModel rocks;
+    private int rockProgram,rockTexture;
     private TreeModel broadleaf,pines;
     private GrassModel grasses;
     private int grassP,terrainDirt,terrainMiddle,terrainGrass;
@@ -94,6 +97,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         treeP=program(Shaders.TREE_V,Shaders.TREE_F);
         grassP=program(Shaders.GRASS_V,Shaders.GRASS_F);
         cloudP=program(Shaders.CLOUD_V,Shaders.CLOUD_F);
+        rockProgram=program(Shaders.ROCK_V,Shaders.ROCK_F);
         try {forestShadows=new ForestShadows(program(Shaders.SHADOW_V,Shaders.SHADOW_F));}
         catch(Exception e){Log.w("SolPixel","Shadow map nao disponivel",e);forestShadows=null;}
         int[] tmp=new int[1];GLES30.glGenVertexArrays(1,tmp,0);emptyVao=tmp[0];
@@ -103,6 +107,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         terrainGrass=loadOptionalGround("terrain_grass.png");
         hasTerrainTextures=(terrainDirt!=0 && terrainMiddle!=0 && terrainGrass!=0);
         cloudMask=loadImageTexture("cloud_mask.png");
+        rockTexture=loadImageTexture("rock_texture.png");
+        try{rocks=new RockModel(context);}catch(Exception ex){Log.e("Solas","GLB de rochas indisponiveis",ex);rocks=null;}
         try{grasses=new GrassModel(context);}
         catch(Exception ex){Log.e("SolPixel","Falha ao iniciar grama",ex);}
         try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
@@ -288,6 +294,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(meshP,"uHasTerrainTextures",hasTerrainTextures?1f:0f);
         v3(meshP,"uGrassDayTint",grassTint);
         f1(meshP,"uDrawDistance",game.renderDistance);
+        texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
+        f1(meshP,"uHasRockSurface",rockTexture!=0?1f:0f);
         if(ground!=null)ground.draw();
         GLES30.glEnable(GLES30.GL_BLEND);
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA,GLES30.GL_ONE_MINUS_SRC_ALPHA);
@@ -296,6 +304,16 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glDepthMask(true);
         GLES30.glDisable(GLES30.GL_BLEND);
         if(objects!=null)objects.draw();
+        // Rochas sao geometria solida (nao caixas), desenhadas antes de arvores e grama.
+        if(rocks!=null && rockTexture!=0 && activeDecoration!=null){
+            GLES30.glUseProgram(rockProgram);
+            GLES30.glUniformMatrix4fv(loc(rockProgram,"uMvp"),1,false,vp,0);
+            GLES30.glUniform3f(loc(rockProgram,"uEye"),x,eyeY,z);
+            v3(rockProgram,"uSun",SUN);
+            f1(rockProgram,"uDrawDistance",game.renderDistance);
+            texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
+            rocks.drawCulled(rockProgram,activeDecoration.rockInstances,x,z,forward[0],forward[2],game.renderDistance);
+        }
         // Duas especies GLB, geometria compartilhada; instancing evita centenas de draws.
         if(activeDecoration!=null && broadleaf!=null && pines!=null){
             GLES30.glUseProgram(treeP);
