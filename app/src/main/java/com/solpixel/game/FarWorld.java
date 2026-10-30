@@ -6,8 +6,8 @@ package com.solpixel.game;
  * de arvores ao mover a camera; nao gera vegetacao fina fora da zona proxima.
  */
 final class FarWorld {
-    static final float HORIZON=2500f;
-    private static final int SIDE_STEPS=32, EDGE=SIDE_STEPS*4, RINGS=30;
+    static final float HORIZON=4000f; // horizonte dos pinheiros
+    private static final int SIDE_STEPS=32, EDGE=SIDE_STEPS*4, RINGS=40;
     final World.Mesh ground;
     final float[] normalTrees,giantTrees;
     private FarWorld(World.Mesh g,float[] n,float[] p){ground=g;normalTrees=n;giantTrees=p;}
@@ -49,7 +49,8 @@ final class FarWorld {
         // percorrer uma grade de 4.000m com o espacamento de 4.55m do original.
         fillTrees(cx,cz,nearRadius-16f,850f,31f,.69f,normal,pine);
         fillTrees(cx,cz,850f,1600f,53f,.75f,normal,pine);
-        fillTrees(cx,cz,1600f,HORIZON,83f,.80f,normal,pine);
+        fillTrees(cx,cz,1600f,2500f,83f,.80f,normal,pine);
+        fillTrees(cx,cz,2500f,HORIZON,125f,.66f,normal,pine);
         return new FarWorld(new World.Mesh(verts.array(),ids.array()),normal.array(),pine.array());
     }
     private static void fillTrees(float cx,float cz,float minR,float maxR,float grid,float chance,
@@ -68,6 +69,7 @@ final class FarWorld {
             float odds=chance*(.15f+.85f*forest);
             if(unit(ix*83+17,iz*59-73)>odds)continue;
             boolean isPine=unit(ix*13+91,iz*17-37)<World.pineMask(px,pz);
+            if(minR>=2500f && !isPine)continue; // sem arvore comum extra apos 2.5 km
             float size=(isPine?.38f*1.20f:.77f)*(1f+.80f*unit(ix*29+71,iz*31-61));
             float offset=2.6f*size-.03f*(isPine?53f:13.3f)*size;
             float angle=unit(ix*71+13,iz*79-51)*6.2831853f;

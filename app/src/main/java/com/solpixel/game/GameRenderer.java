@@ -29,6 +29,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private MeshGpu ground,objects,shadows;
     // Solas Rocks v1: GLBs instanciados com LOD e material de pedra.
     private RockModel rocks;
+    private RockCollision rockCollision;
+    private RockCollision.Index rockIndex;
+    private FireflyModel fireflies;
+    private int fireflyP;
+    private float localForest=0f;
+    private float groundedY=Float.NaN;
     private int rockProgram,rockTexture,cliffRockTexture;
     private TreeModel broadleaf,pines;
     // Solas v3: geometria simplificada ate 2500m e LODs por especie.
@@ -103,6 +109,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         blurP=program(Shaders.FULL_V,Shaders.BLUR_F);
         finalP=program(Shaders.FULL_V,Shaders.FINAL_F);
         dustP=program(Shaders.DUST_V,Shaders.DUST_F);
+        fireflyP=program(Shaders.FIREFLY_V,Shaders.FIREFLY_F);
+        try{fireflies=new FireflyModel();}catch(Exception e){Log.w("Solas","Vagalumes indisponiveis",e);}
         treeP=program(Shaders.TREE_V,Shaders.TREE_F);
         grassP=program(Shaders.GRASS_V,Shaders.GRASS_F);
         cloudP=program(Shaders.CLOUD_V,Shaders.CLOUD_F);
@@ -125,6 +133,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_MIRRORED_REPEAT);
         }
         try{rocks=new RockModel(context);}catch(Exception ex){Log.e("Solas","GLB de rochas indisponiveis",ex);rocks=null;}
+        try{rockCollision=new RockCollision(context);}
+        catch(Exception ex){Log.e("Solas","Colisao GLB indisponivel; mantendo terreno e arvores",ex);rockCollision=null;}
         try{grasses=new GrassModel(context);}
         catch(Exception ex){Log.e("SolPixel","Falha ao iniciar grama",ex);}
         try{clouds=new CloudModel(context);}catch(Exception ex){Log.e("SolPixel","Falha GLB nuvens",ex);}
@@ -182,6 +192,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 ground=nextGround;objects=nextObjects;shadows=nextShadows;
                 farGround=nextFarGround;farWorld=queuedWorld.far;
                 activeDecoration=queuedWorld.decoration;
+                rockIndex=rockCollision==null?null:rockCollision.index(activeDecoration.rockInstances);
                 baseX=queuedWorld.x;baseZ=queuedWorld.z;
                 worldRadius=Math.round(nextWorldRadius);
                 appliedWorldRevision=pendingWorldRevision;
@@ -209,7 +220,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             });
         }
         // Camera vertical amortecida, sem head-bob gerador de tremor.
-        float surfaceY=World.height(x,z);
+        float surfaceY=Float.isNaN(groundedY)?World.height(x,z):groundedY;
         float targetEyeY=surfaceY+1.72f+airHeight;
         if(Float.isNaN(smoothedEyeY)||Math.abs(smoothedEyeY-targetEyeY)>19f)
             smoothedEyeY=targetEyeY;
@@ -229,6 +240,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // Estima bosque a frente, sem examinar milhares de arvores todo frame.
         if(++vegetationFrame%12==0){
             float a=World.forestDensity(x,z);
+            localForest=a; // Vagalumes SOMENTE se o jogador estiver dentro da floresta
             float b=World.forestDensity(x+forward[0]*28f,z+forward[2]*28f);
             float c=World.forestDensity(x+forward[0]*60f,z+forward[2]*60f);
             forestNear=Math.min(1f,Math.max(a,Math.max(b,c))*1.6f);
@@ -244,6 +256,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             jumpPressed=false;stickX=stickY=0;resetRequested=false;
             moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
             smoothedEyeY=Float.NaN;
+            groundedY=World.height(x,z);
             consumeLook();
         }
         float[] drag=consumeLook();
@@ -276,23 +289,36 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         }
         if(moveVelocityX!=0 || moveVelocityZ!=0){
             float oldX=x,oldZ=z;
+            float oldSurface=Float.isNaN(groundedY)?World.height(oldX,oldZ):groundedY;
             float targetX=x+moveVelocityX*dt,targetZ=z+moveVelocityZ*dt;
             collisionPoint[0]=targetX;collisionPoint[1]=targetZ;
-            World.collide(collisionPoint,.48f,activeDecoration);
-            x=collisionPoint[0];z=collisionPoint[1];
-            if(Math.abs(x-targetX)>.018f)moveVelocityX*=.22f;
-            if(Math.abs(z-targetZ)>.018f)moveVelocityZ*=.22f;
-            float traveled=(float)Math.hypot(x-oldX,z-oldZ);
-            float rise=World.height(x,z)-World.height(oldX,oldZ);
-            // Heightmap funciona como colisao solida: nao atravessar paredoes.
-            if(rise>.11f+traveled*.92f){
-                x=oldX;z=oldZ;moveVelocityX*=.12f;moveVelocityZ*=.12f;
+            World.collide(collisionPoint,.48f,activeDecoration); // troncos apenas
+            float nextX=collisionPoint[0],nextZ=collisionPoint[1];
+            float moved=(float)Math.hypot(nextX-oldX,nextZ-oldZ);
+            float nextTerrain=World.height(nextX,nextZ);
+            float nextSurface=nextTerrain;
+            boolean rockWall=false;
+            if(rockCollision!=null && rockIndex!=null && airHeight<.55f){
+                rockWall=rockCollision.blocked(nextX,nextZ,oldSurface,rockIndex);
+                if(!rockWall)
+                    nextSurface=Math.max(nextSurface,rockCollision.surfaceAt(nextX,nextZ,nextTerrain,
+                                       oldSurface+.58f,rockIndex));
+            }
+            float rise=nextSurface-oldSurface;
+            boolean rockStep=nextSurface>nextTerrain+.035f;
+            if(rockWall || (rockStep?rise>.58f:rise>.11f+moved*.92f)){
+                // Pedras pequenas admitirem degrau ate ~0.58m; montanhas mantem limite de rampa.
+                x=oldX;z=oldZ;
+                moveVelocityX*=.12f;moveVelocityZ*=.12f;
             }else{
-                // Saida de um plato alto preserva altitude e inicia queda real.
-                if(airHeight<=.001f && -rise>.18f+traveled*1.12f){
-                    airHeight=-rise;vy=Math.min(vy,0f);
+                x=nextX;z=nextZ;
+                groundedY=nextSurface;
+                if(airHeight<=.001f && -rise>.18f+moved*1.12f){
+                    airHeight=-rise;vy=Math.min(vy,0f); // queda apos uma borda
                 }
-                step+=traveled;
+                step+=moved;
+                if(Math.abs(x-targetX)>.018f)moveVelocityX*=.22f;
+                if(Math.abs(z-targetZ)>.018f)moveVelocityZ*=.22f;
             }
         }
         if(jumpPressed){
@@ -396,6 +422,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(grassP,"uEclipse",eclipse);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
                          time,x,z,moveVelocityX,moveVelocityZ);
+        }
+        // Particulas pontuais e cintilantes, so durante o eclipse e na floresta local.
+        if(fireflies!=null && activeDecoration!=null && localForest>.29f && eclipse>.56f){
+            float night=Math.min(1f,Math.max(0f,(eclipse-.56f)/.35f));
+            fireflies.draw(fireflyP,activeDecoration.fireflyInstances,vp,x,eyeY,z,time,night);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(clouds!=null && cloudVisibility>.006f){

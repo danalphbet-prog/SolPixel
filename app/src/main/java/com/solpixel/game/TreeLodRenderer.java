@@ -8,7 +8,7 @@ import java.util.Arrays;
 final class TreeLodRenderer {
     private static final int LEVELS=7;
     private static final String[] PERCENT={"20","50","80","90","95","99"};
-    private static final float MAX_DIST=2500f;
+    private static final float MAX_DIST=4000f; // pinheiro distante ate 4 km
     private final TreeModel[][] models=new TreeModel[2][LEVELS];
     private final float[][][] packed=new float[2][LEVELS][];
     private float[] nearNormal,nearGiant,farNormal,farGiant;
@@ -30,12 +30,12 @@ final class TreeLodRenderer {
     private static int level(float distance,boolean giant){
         if(giant){
             if(distance<60f)return 0;
-            if(distance<120f)return 1;
-            if(distance<220f)return 2;
-            if(distance<380f)return 3;
-            if(distance<700f)return 4;
-            if(distance<1300f)return 5;
-            return 6;
+            if(distance<70f)return 1;   // LOD 20
+            if(distance<220f)return 2;  // LOD 50
+            if(distance<380f)return 3;  // LOD 80
+            if(distance<700f)return 4;  // LOD 90
+            if(distance<3000f)return 5; // LOD 95, incluindo 1300-2500m
+            return 6;                   // LOD 99, 3000-4000m
         }
         if(distance<45f)return 0;
         if(distance<90f)return 1;
@@ -58,7 +58,8 @@ final class TreeLodRenderer {
         for(int offset=0;offset+7<source.length;offset+=8){
             float dx=source[offset]-eyeX,dz=source[offset+2]-eyeZ;
             float ds=dx*dx+dz*dz;
-            if(ds>MAX_DIST*MAX_DIST)continue;
+            float limit=kind==1?MAX_DIST:2500f; // arvores normais mantem alcance anterior
+            if(ds>limit*limit)continue;
             float distance=(float)Math.sqrt(ds);
             if(distance>45f && dx*fx+dz*fz < -distance*.18f)continue;
             builders[kind][level(distance,kind==1)].add(source,offset);

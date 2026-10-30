@@ -10,9 +10,12 @@ public final class World {
     static final float STEP = 3f; // compatibilidade com versoes anteriores
     private static final float SUN_X=.53f, SUN_Z=-.47f;
     static final int BROADLEAF=0, PINE=1;
+    static final float WHEAT_FIELD_SCALE=1.75f; // campos +75% em extensao linear
+    static final float GRASS_SCALE=1.70f;
+
     // solpixel-v08: parametros procedurais fixos, nao expostos nas configuracoes.
-    static final float TREE_DENSITY=1.60f;
-    static final float CLUSTER_SCALE=1.65f;
+    static final float TREE_DENSITY=1.60f; // numero de arvores preservado
+    static final float CLUSTER_SCALE=2.145f; // florestas: +30% de tamanho dos clusters
     static class Mesh {
         final float[] vertices; final short[] indices;
         Mesh(float[] v,short[] i){vertices=v;indices=i;}
@@ -210,10 +213,10 @@ public final class World {
         Mesh objects,shadows;
         Tree[] trees;
         final HashMap<Long,Tree[]> collisionCells=new HashMap<>();
-        float[] broadleafInstances,pineInstances,grassInstances,rockInstances;
-        Decoration(Mesh o,Mesh s,Tree[] trees,float[] broad,float[] pine,float[] grass,float[] rocks){
+        float[] broadleafInstances,pineInstances,grassInstances,rockInstances,fireflyInstances;
+        Decoration(Mesh o,Mesh s,Tree[] trees,float[] broad,float[] pine,float[] grass,float[] rocks,float[] flies){
             this.objects=o;this.shadows=s;this.trees=trees;
-            broadleafInstances=broad;pineInstances=pine;grassInstances=grass;rockInstances=rocks;
+            broadleafInstances=broad;pineInstances=pine;grassInstances=grass;rockInstances=rocks;fireflyInstances=flies;
             // Grade espacial construida no worker: colisao O(arvores proximas).
             HashMap<Long,ArrayList<Tree>> cells=new HashMap<>();
             for(Tree t:trees){
@@ -232,6 +235,7 @@ public final class World {
         FloatList v=new FloatList(),shadows=new FloatList(),broad=new FloatList(),pine=new FloatList();
         ShortList ids=new ShortList(),shadowIds=new ShortList();
         ArrayList<Tree> trees=new ArrayList<>();
+        FloatList fireflies=new FloatList(); // geracao no worker junto da vegetacao
         // O limite acompanha a distancia configurada, sem teto antigo de 236m.
         float range=Math.max(48f,radius-12f);
         // Geracao global independente da distancia ao jogador.
@@ -274,6 +278,15 @@ public final class World {
             float groundOffset=2.6f*size-.03f*modelHeight*size;
             Tree tree=new Tree(kind,px,py+groundOffset,pz,size,rotation,density,radiusTrunk);
             trees.add(tree);
+            // Vagalumes apenas onde EXISTEM arvores/bioma de floresta.
+            // Posicoes globais e seed sao estaveis ao reconstituir a malha.
+            if(density>.29f && n01(ix*43+67,iz*47-41)<.29f){
+                float a=n01(ix*19-7,iz*23+91)*6.2831853f;
+                float r=1.4f+2.8f*n01(ix*53+27,iz*31-13);
+                float fx=px+(float)Math.cos(a)*r,fz=pz+(float)Math.sin(a)*r;
+                fireflies.add(fx);fireflies.add(height(fx,fz)+.9f+2.4f*n01(ix*61+11,iz*67-19));
+                fireflies.add(fz);fireflies.add(n01(ix*73-17,iz*79+5)*6.2831853f);
+            }
             // Sombras de objetos so perto; sombreado florestal do solo ja e procedural.
             if(distance<115f)shadow(shadows,shadowIds,px,pz,(kind==PINE?10f:5f)*size,
                 (kind==PINE?4f:2.7f)*size);
@@ -393,7 +406,7 @@ public final class World {
         // Toda a geracao ocorre no worker existente de World.decorate().
         FloatList grass=new FloatList();
         final float grassRadius=Math.min(range-8f,Math.max(145f,radius*.29f+72f));
-        final float grid=2.25f;
+        final float grid=2.0f; // aproximadamente 27% mais pontos por area
         int minGX=(int)Math.floor((cx-grassRadius)/grid)-1;
         int maxGX=(int)Math.ceil((cx+grassRadius)/grid)+1;
         int minGZ=(int)Math.floor((cz-grassRadius)/grid)-1;
@@ -421,19 +434,19 @@ public final class World {
             float wood=smooth(.18f,.70f,forest);
             float open=1f-wood;
             // Mascaras em duas escalas: cada ilha tem centro denso e borda rala.
-            float island=smooth(-.28f,.23f,noise(px*.014f+201,pz*.014f-97));
-            float details=smooth(-.33f,.13f,noise(px*.066f-29,pz*.066f+183));
+            float island=smooth(-.28f,.23f,noise(px*.01077f+201,pz*.01077f-97));
+            float details=smooth(-.33f,.13f,noise(px*.05077f-29,pz*.05077f+183));
             float grassCoverage=island*(.30f+.70f*details);
             // Arquipelagos de trigo em regioes abertas; manchas com centenas de m.
-            float wheatMacro=smooth(-.09f,.36f,noise(px*.0049f-155,pz*.0049f+177));
-            float wheatIslands=smooth(-.33f,.13f,noise(px*.017f+55,pz*.017f-89));
+            float wheatMacro=smooth(-.09f,.36f,noise(px*(.0049f/WHEAT_FIELD_SCALE)-155,pz*(.0049f/WHEAT_FIELD_SCALE)+177));
+            float wheatIslands=smooth(-.33f,.13f,noise(px*(.017f/WHEAT_FIELD_SCALE)+55,pz*(.017f/WHEAT_FIELD_SCALE)-89));
             float wheatField=wheatMacro*(.58f+.42f*wheatIslands)*open;
             // Em campos de trigo, trigo supera grama; em prados, o contrario.
             float wheatChance=(.05f+.91f*wheatField)*open*smooth(.22f,.80f,wheatField);
             // Centro dos arquipelagos mais fechado, sem afetar os biomas de floresta.
-            wheatChance=Math.min(.985f,wheatChance*1.28f);
+            wheatChance=Math.min(.995f,wheatChance*1.28f*1.20f); // taxa +20%, limite seguro
             if(elevation>88f||slope>1.65f)wheatChance=0f;
-            float grassChance=.10f+.78f*grassCoverage;
+            float grassChance=.15f+.85f*grassCoverage; // cobertura de grama mais densa
             grassChance*=1f-.77f*smooth(.29f,.80f,wheatField);
             // Dentro da floresta a grama fica 60% menos frequente.
             // A atenuacao progressiva evita limites bruscos entre biomas.
@@ -470,6 +483,7 @@ public final class World {
             else if(n01(gx*83+13,gz*89-7)<mushroomChance)type=6+(int)(n01(gx*43-33,gz*41+7)*2f);
             if(type<0)continue;
             float size=.75f+n01(gx*73+11,gz*61+7)*.50f;
+            if(type<=2)size*=GRASS_SCALE; // 3 variantes de grama 1.7x
             if(type==8)size*=.50f; // Samambaia: 50% da grama.
             if(type==9)size*=1.42f; // Trigo alto.
             if(type>=6 && type<=7)size*=1.05f;
@@ -480,7 +494,7 @@ public final class World {
             // As bordas continuam mais vazias, sem interrupcao abrupta.
             float cluster=type==9?wheatField:grassCoverage;
             if((type<=2||type==9) && cluster>.38f &&
-               n01(gx*71-39,gz*17+23)<.63f*cluster){
+               n01(gx*71-39,gz*17+23)<.78f*cluster){
                 float a2=n01(gx*11+55,gz*37-17)*6.2831853f;
                 float separation=.30f+.42f*n01(gx*13-19,gz*31+7);
                 float x2=px+(float)Math.cos(a2)*separation;
@@ -506,14 +520,14 @@ public final class World {
             }
         }
         return new Decoration(new Mesh(v.array(),ids.array()),new Mesh(shadows.array(),shadowIds.array()),
-               trees.toArray(new Tree[0]),broad.array(),pine.array(),grass.array(),rocks.array());
+               trees.toArray(new Tree[0]),broad.array(),pine.array(),grass.array(),rocks.array(),fireflies.array());
     }
     /** Campo continuo 0..1 para aumentar poeira sobre trigo sem depender da camera. */
     static float wheatField(float x,float z){
         float forest=forestDensity(x,z);
         float open=1f-smooth(.18f,.70f,forest);
-        float macro=smooth(-.09f,.36f,noise(x*.0049f-155,z*.0049f+177));
-        float islands=smooth(-.33f,.13f,noise(x*.017f+55,z*.017f-89));
+        float macro=smooth(-.09f,.36f,noise(x*(.0049f/WHEAT_FIELD_SCALE)-155,z*(.0049f/WHEAT_FIELD_SCALE)+177));
+        float islands=smooth(-.33f,.13f,noise(x*(.017f/WHEAT_FIELD_SCALE)+55,z*(.017f/WHEAT_FIELD_SCALE)-89));
         return macro*(.58f+.42f*islands)*open;
     }
     /** Compactacao de um afloramento GLB: 9 floats = posicao, escala XYZ, giro e familia. */
@@ -557,21 +571,7 @@ public final class World {
                 px=t.x+dx/d*limit;pz=t.z+dz/d*limit;
             }
         }
-        // Colisores leves para pedras GLB proximas: sem collider distante.
-        float[] stones=decoration.rockInstances;
-        if(stones!=null)for(int o=0;o+8<stones.length;o+=9){
-            float rx=stones[o],rz=stones[o+2];
-            float rockRadius=Math.min(4.5f,Math.max(stones[o+3],stones[o+5])*.47f);
-            float limit=radius+rockRadius;
-            float dx=px-rx,dz=pz-rz;
-            if(Math.abs(dx)>limit+.5f || Math.abs(dz)>limit+.5f)continue;
-            float d2=dx*dx+dz*dz;
-            if(d2>25f || d2>=limit*limit)continue; // ativacao em 5 m
-            float distance=(float)Math.sqrt(d2);
-            if(distance<.0001f){dx=1f;dz=0f;distance=1f;}
-            px=rx+dx/distance*limit;
-            pz=rz+dz/distance*limit;
-        }
+        // Colisao de pedras GLB agora usa triangulos em RockCollision (raio local de 5m).
         position[0]=px;position[1]=pz;
     }
     // Solas Geology v2: stride 10; solo recebe intensidade de rocha,

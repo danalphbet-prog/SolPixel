@@ -397,6 +397,44 @@ final class Shaders {
         }
         """;
 
+    // Solas 0.3: vaga-lumes PS1, emissivos e sutis, sem shadow map ou textura.
+    static final String FIREFLY_V = """
+        #version 300 es
+        precision highp float;
+        layout(location=0) in vec4 aPositionPhase;
+        uniform mat4 uMvp;
+        uniform vec3 uEye;
+        uniform float uTime,uNight;
+        out float vAlpha,vHue;
+        void main(){
+            vec3 p=aPositionPhase.xyz;
+            float phase=aPositionPhase.w;
+            p.x+=sin(uTime*.63+phase)*.65;
+            p.z+=cos(uTime*.49+phase*1.31)*.64;
+            p.y+=sin(uTime*.88+phase*1.67)*.29;
+            float dist=distance(p,uEye);
+            gl_Position=uMvp*vec4(p,1.0);
+            float flicker=.55+.45*pow(max(0.0,sin(uTime*2.1+phase*3.8)),2.0);
+            vAlpha=uNight*(1.0-smoothstep(28.0,43.0,dist))*flicker;
+            vHue=fract(phase*.37);
+            gl_PointSize=clamp(5.5-0.06*dist,1.5,5.5);
+        }
+        """;
+    static final String FIREFLY_F = """
+        #version 300 es
+        precision mediump float;
+        in float vAlpha,vHue;
+        out vec4 outColor;
+        void main(){
+            float r=length(gl_PointCoord-.5)*2.0;
+            float core=1.0-smoothstep(.08,.49,r);
+            float glow=1.0-smoothstep(.30,.98,r);
+            vec3 hue=mix(vec3(.95,.95,.45),vec3(.56,.99,.35),vHue);
+            float alpha=vAlpha*(core*.92+glow*.18);
+            if(alpha<.035)discard;
+            outColor=vec4(hue,alpha);
+        }
+        """;
     static final String DUST_V = """
         #version 300 es
         precision highp float;
