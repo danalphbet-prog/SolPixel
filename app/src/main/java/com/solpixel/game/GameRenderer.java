@@ -75,6 +75,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
     private ForestShadows forestShadows;
+    private TerrainShadowBake terrainShadowBake;
     private float forestNear=0f;
     private int vegetationFrame=0;
     private float cloudVisibility=1f;
@@ -93,10 +94,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private static final class BuildResult {
         final float x,z;final World.Mesh ground;final World.Decoration decoration;
         final FarWorld far;
+        final TerrainShadowBake.Data terrainShadows;
         final MacieiraRenderer.Placement[] macieiraPlacements;
         BuildResult(float x,float z,World.Mesh m,World.Decoration d,FarWorld far,
-                    MacieiraRenderer.Placement[] macieiras){
-            this.x=x;this.z=z;this.ground=m;this.decoration=d;this.far=far;
+                    TerrainShadowBake.Data baked,MacieiraRenderer.Placement[] macieiras){
+            this.x=x;this.z=z;this.ground=m;this.decoration=d;this.far=far;this.terrainShadows=baked;
             this.macieiraPlacements=macieiras;
         }
     }
@@ -135,6 +137,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glDepthFunc(GLES30.GL_LEQUAL);
         GLES30.glClearColor(.57f,.69f,.75f,1);
         meshP=program(Shaders.MESH_V,Shaders.MESH_F);
+        terrainShadowBake=new TerrainShadowBake();
         skyP=program(Shaders.FULL_V,Shaders.SKY_F);
         // Transparent points reconstructed from EXR star coordinates, NOT the EXR sky texture.
         starTexture=loadImageTexture("stars_points_2048.png");
@@ -234,6 +237,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 ground=nextGround;objects=nextObjects;shadows=nextShadows;
                 farGround=nextFarGround;farWorld=queuedWorld.far;
                 activeDecoration=queuedWorld.decoration;
+                if(terrainShadowBake!=null)terrainShadowBake.upload(queuedWorld.terrainShadows);
                 activeMacieiras=queuedWorld.macieiraPlacements;
                 rockIndex=rockCollision==null?null:rockCollision.index(activeDecoration.rockInstances);
                 baseX=queuedWorld.x;baseZ=queuedWorld.z;
@@ -258,7 +262,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                     World.Decoration decoration=World.decorate(cx,cz,radius);
                     FarWorld distant=FarWorld.build(cx,cz,radius);
                     MacieiraRenderer.Placement[] macieiraPlacements=MacieiraRenderer.generate(cx,cz);
-                    completedWorld=new BuildResult(cx,cz,near,decoration,distant,macieiraPlacements);
+                    TerrainShadowBake.Data baked=TerrainShadowBake.generate(cx,cz,radius);
+                    completedWorld=new BuildResult(cx,cz,near,decoration,distant,baked,macieiraPlacements);
                 }
                 catch(Throwable e){Log.e("SolPixel","Terreno async",e);buildingWorld=false;}
             });
@@ -437,6 +442,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,groundTexture);
         i1(meshP,"uGround",0);
         bindForestShadow(meshP);
+        if(terrainShadowBake!=null)terrainShadowBake.bind(meshP);
         texture(2,hasTerrainTextures?terrainDirt:groundTexture);
         texture(3,hasTerrainTextures?terrainMiddle:groundTexture);
         texture(4,hasTerrainTextures?terrainGrass:groundTexture);
@@ -473,6 +479,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
             f1(rockProgram,"uEclipse",eclipse);
             applySwordLight(rockProgram);
+            if(terrainShadowBake!=null)terrainShadowBake.bind(rockProgram);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
             texture(8,cliffRockTexture);i1(rockProgram,"uCliffRockTex",8);
             f1(rockProgram,"uHasCliffRock",cliffRockTexture!=0?1f:0f);
@@ -488,6 +495,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",FarWorld.HORIZON);
             f1(treeP,"uEclipse",eclipse);
             applySwordLight(treeP);
+            if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
             if(treeLods!=null){
                 treeLods.draw(treeP,activeDecoration.broadleafInstances,activeDecoration.pineInstances,
@@ -509,6 +517,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",FarWorld.HORIZON);
             f1(treeP,"uEclipse",eclipse);
             applySwordLight(treeP);
+            if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
             macieiras.draw(treeP,activeMacieiras,x,z,forward[0],forward[2]);
         }
@@ -650,13 +659,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     }
     private void updateSwordTip(){
         // As coordenadas aqui correspondem exatamente à transformação em SWORD_V.
-        float s=1.225f*1.18f;
-        float px=-.700f*s,py=.714f*s;
+        float s=1.225f*1.357f;
+        float angle=(float)Math.atan2(.700,.714)*.80f;
+        float px=-(float)Math.sin(angle)*s,py=(float)Math.cos(angle)*s;
         float swing=-1.10f*attackProgress();
         float cs=(float)Math.cos(swing),sn=(float)Math.sin(swing);
         float tx=px-.03f,ty=py+.10f;
-        float xScreen=cs*tx-sn*ty+.03f+1.36f;
-        float yScreen=sn*tx+cs*ty-.10f-.82f;
+        float xScreen=cs*tx-sn*ty+.03f+1.29f;
+        float yScreen=sn*tx+cs*ty-.10f-.895f;
         float[] tip={xScreen,yScreen,-1.70f,1f};
         float[] clip=new float[4];
         Matrix.multiplyMV(clip,0,proj,0,tip,0);

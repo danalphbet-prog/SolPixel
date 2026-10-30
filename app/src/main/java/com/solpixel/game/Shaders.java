@@ -60,6 +60,15 @@ final class Shaders {
         uniform float uSwordGlow;
         uniform vec3 uSwordLightPos;
         uniform vec4 uCloudDiscs[4];
+        uniform sampler2D uTerrainShadowMap;
+        uniform vec4 uTerrainShadowBounds;
+        uniform float uTerrainShadowEnabled;
+        float bakedTerrainSun(vec2 xz){
+            if(uTerrainShadowEnabled<.5)return 1.0;
+            vec2 uv=(xz-uTerrainShadowBounds.xy)/uTerrainShadowBounds.zw;
+            if(any(lessThan(uv,vec2(0.0)))||any(greaterThan(uv,vec2(1.0))))return 1.0;
+            return mix(.22,1.0,texture(uTerrainShadowMap,uv).r);
+        }
         out vec4 outColor;
         float cloudShadow(vec2 px){
             float darkness=0.0;
@@ -184,7 +193,7 @@ final class Shaders {
             // Sol real bloqueado pelos GLB proximos + ceu ocluido pelo dossel.
             float lightFraction=sunlightFraction(vLightCoord,vDist);
             ambient*=1.0-clamp(vForest,0.0,1.0)*.36;
-            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction*cloudShadow(vPos.xz);
+            vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction*cloudShadow(vPos.xz)*bakedTerrainSun(vPos.xz);
             vec3 color=albedo*(ambient+direct);
             color*=1.0-clamp(vForest,0.0,1.0)*.17;
 
@@ -401,8 +410,9 @@ final class Shaders {
         out vec2 vUv;
         out vec3 vNormal;
         void main(){
-            float cs=.714,sn=.700;
-            vec3 p=aPos*1.18;  // 30% maior que v0.4.1 (0.91)
+            float angle=atan(.700,.714)*.80; // 20% mais vertical
+            float cs=cos(angle),sn=sin(angle);
+            vec3 p=aPos*1.357; // +15% sobre 1.18
             vec3 blade=vec3(p.x*cs-p.y*sn,p.x*sn+p.y*cs,p.z);
             // Rotação de golpe da direita para esquerda, ao redor do punho.
             vec2 pivot=vec2(.03,-.10);
@@ -411,7 +421,7 @@ final class Shaders {
             vec2 off=blade.xy-pivot;
             blade.xy=vec2(off.x*ca-off.y*sa,off.x*sa+off.y*ca)+pivot;
             float sway=sin(uTime*3.0)*.018*uWalk+sin(uTime*1.25)*.005;
-            blade+=vec3(1.36+sway,-.82+cos(uTime*2.5)*.012*uWalk,-1.70);
+            blade+=vec3(1.29+sway,-.895+cos(uTime*2.5)*.012*uWalk,-1.70);
             gl_Position=uProjection*vec4(blade,1.0);
             vUv=aUv;
             vNormal=normalize(vec3(aNormal.x*cs-aNormal.y*sn,aNormal.x*sn+aNormal.y*cs,aNormal.z));
