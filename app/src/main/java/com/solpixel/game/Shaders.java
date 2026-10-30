@@ -931,6 +931,8 @@ final class Shaders {
             gl_Position=uMvp*vec4(pos,1.0);
         }
         """;
+    // SOLAS_V053_TOON_CLOUDS_3_TONES
+    // ColorRamp Constant: tres cores, sem degradê entre sombra, base e luz.
     static final String CLOUD_F = """
         #version 300 es
         precision highp float;
@@ -941,35 +943,51 @@ final class Shaders {
         uniform float uAlpha,uEclipse;
         out vec4 outColor;
         float bayer(vec2 pixel){
-            // Matriz Bayer 4x4 fixa. O padrao nao varia no tempo: sem cintilacao.
+            // Bayer 4x4 com pixels agrupados em 3x3 para estética PS1.
             const float b[16]=float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
             ivec2 p=ivec2(mod(floor(pixel),4.0));
             return (b[p.x+4*p.y]+.5)/16.0;
         }
         void main(){
-            float dither=bayer(gl_FragCoord.xy);
-            // Dissolve graduado em pixels, apenas nas faixas de transicao.
-            // Na visibilidade maxima a nuvem permanece 90% opaca.
+            // O contorno continua voxelado. Fade por dithering fixo, sem serrilhado temporal.
+            vec2 pixel=floor(gl_FragCoord.xy/3.0);
+            float dither=bayer(pixel);
             float visibility=clamp(uAlpha/.90,0.0,1.0);
-            float coverage=smoothstep(0.0,1.0,visibility);
-            // Dither em longa distancia continua discernivel e apaga pixels.
+            float coverage=visibility*visibility*(3.0-2.0*visibility);
             float farDither=smoothstep(1400.0,3700.0,vCloudDistance);
             if(dither>coverage*mix(1.0,.70,farDither))discard;
+
             vec3 n=normalize(vNormal);
+            vec3 sun=normalize(uSun);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
-            float mask=texture(uCloudMask,uv*.95).r;
-            float light=max(0.0,dot(n,normalize(uSun)));
-            float skyFill=.18+.18*max(n.y,0.0);
-            // Dithering tambem no ColorRamp azul-acinzentado -> branco.
-            float ramp=smoothstep(.18,.83,light*.84+skyFill+(dither-.5)*.115);
-            vec3 shadowBlueGray=vec3(.48,.58,.69);
-            vec3 sunWhite=vec3(.99,.995,1.0);
-            vec3 color=mix(shadowBlueGray,sunWhite,ramp);
-            color*=mix(.91,1.04,mask);
-            color=min(color*1.10,vec3(1.0)); // +10% de claridade
-            color=mix(color,vec3(.65,.77,.91),farDither*.33);
-            color=mix(color,color*vec3(.10,.20,.48),uEclipse*.96);
-            color=floor(color*47.0+dither*.60)/47.0;
+            // Amostragem em blocos, sem gradiente de textura sobre as tres tintas.
+            vec2 uvPixel=floor(uv*64.0)/64.0;
+            float mask=texture(uCloudMask,uvPixel*.95).r;
+            // Luz direcional por face; base (~60%), sombra (~30%), brilho (~10%)
+            // sao metas artisticas: cobertura efetiva depende da geometria da nuvem.
+            float direct=max(0.0,dot(n,sun));
+            float exposure=.21+.50*direct+.12*n.y+.07*n.z;
+            exposure+=(mask-.5)*.065+(dither-.5)*.045;
+
+            // Paletas diurnas: azul-acinzentado, branco-azulado, branco-creme.
+            vec3 dayShadow=vec3(.34,.43,.56);
+            vec3 dayBase=vec3(.82,.90,.98);
+            vec3 dayLight=vec3(1.0,.98,.92);
+            // Paletas noturnas: mesmas tres faixas, escurecidas pelo eclipse.
+            vec3 nightShadow=vec3(.055,.079,.13);
+            vec3 nightBase=vec3(.16,.23,.35);
+            vec3 nightLight=vec3(.31,.39,.50);
+            float night=smoothstep(.08,.96,uEclipse);
+            vec3 shadow=mix(dayShadow,nightShadow,night);
+            vec3 base=mix(dayBase,nightBase,night);
+            vec3 light=mix(dayLight,nightLight,night);
+
+            // Interpolacao CONSTANT: step escolhe APENAS uma das 3 cores.
+            float baseStep=step(.255,exposure);
+            float lightStep=step(.585,exposure);
+            vec3 color=mix(shadow,base,baseStep);
+            color=mix(color,light,lightStep);
+            // Preserva 90% de opacidade e o fade por dithering do jogo.
             outColor=vec4(color,.90);
         }
         """;

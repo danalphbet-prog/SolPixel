@@ -11,8 +11,8 @@ import java.nio.ByteOrder;
 
 /** Nuvens volumetricas: 3 modelos GLB 2.0 convertidos dos OBJ originais. */
 final class CloudModel {
-    private static final String[] NAMES={"nuvem_pequena.glb","nuvem_larga.glb","nuvem_alta.glb"};
-    private final Mesh[] meshes=new Mesh[3];
+    private static final String[] NAMES={"nuvem_pequena.glb","nuvem_larga.glb","nuvem_alta.glb","nuvem_stratus.glb","nuvem_cumulonimbus.glb"};
+    private final Mesh[] meshes=new Mesh[NAMES.length];
     private static final class Mesh {int vao,vbo,ibo,count; float cx,cy,cz;}
     CloudModel(Context context) throws Exception {
         for(int k=0;k<NAMES.length;k++) meshes[k]=readGlb(context,NAMES[k]);
@@ -125,7 +125,7 @@ final class CloudModel {
                 float opacity=.90f*intro*fade(340f,650f,dist)*
                                           (1f-fade(3150f,3900f,dist));
                 if(opacity<=.014f)continue;
-                int type=Math.min(2,(int)(hash(gx*17,gz*31)*3f));
+                int type=Math.min(NAMES.length-1,(int)(hash(gx*17,gz*31)*NAMES.length));
                 Mesh mesh=meshes[type];
                 float scale=96f+hash(gx*29,gz*17)*48f;
                 float height=cloudHeight(gx,gz);
