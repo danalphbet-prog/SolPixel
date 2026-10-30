@@ -2,6 +2,9 @@ package com.solpixel.game;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import java.io.InputStream;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
@@ -11,6 +14,10 @@ import android.view.View;
 public final class GameHud extends View {
     private final GameActivity game;
     private final Paint p = new Paint(3);
+    private final Bitmap backpack,actionIcon,slotSword;
+    private boolean inventoryOpen=false;
+    private int actionId=-1;
+    private static final int[] SLOT_BORDER={0xFFF8E6C0,0xFFA9B6AF};
     private int moveId = -1, lookId = -1, jumpId = -1;
     private int sliderId=-1;
     private int sliderWhich=-1;
@@ -19,12 +26,25 @@ public final class GameHud extends View {
     GameHud(GameActivity game) {
         super(game); this.game = game;
         density=getResources().getDisplayMetrics().density;
+        backpack=bitmap("backpack_64.png");actionIcon=bitmap("sword_action_64.png");
+        slotSword=bitmap("sword_slot_64.png");
         // Usar Canvas acelerado pelo hardware. Layer SOFTWARE prejudicava os toques
         // e o desempenho do GLSurfaceView rodando ao fundo.
+    }
+    private Bitmap bitmap(String name){
+        try(InputStream in=getContext().getAssets().open(name)){
+            return BitmapFactory.decodeStream(in);
+        }catch(Exception e){return null;}
+    }
+    private void drawSprite(Canvas c,Bitmap b,float x,float y,float size){
+        if(b==null)return;
+        ink(0xFFFFFFFF);p.setFilterBitmap(false);
+        c.drawBitmap(b,null,new RectF(x-size/2,y-size/2,x+size/2,y+size/2),p);
     }
     private float dp(float v) { return v*density; }
     void resetControls() {
         moveId=lookId=jumpId=sliderId=-1; stickX=stickY=0;
+        inventoryOpen=false;actionId=-1;game.renderer.swordAction(false);
         game.renderer.move(0,0);
     }
     private void ink(int color) { p.setColor(color); p.setStyle(Paint.Style.FILL); p.setStrokeWidth(dp(2)); }
@@ -75,7 +95,7 @@ public final class GameHud extends View {
             text(c,"Música ambiente",w*.55f,h*.36f,16,0xFFEAF0F3,false);
             text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.475f,15,0xFFF9E3BE,true);
             drawSlider(c,w*.31f,w*.69f,h*.54f,game.musicVolume);
-            text(c,"TERRENO  "+game.renderDistance+" m / HORIZONTE 2500 m",w*.5f,h*.635f,13,0xFFF9E3BE,true);
+            text(c,"TERRENO  "+game.renderDistance+" m / HORIZONTE 4000 m",w*.5f,h*.635f,13,0xFFF9E3BE,true);
             drawSlider(c,w*.31f,w*.69f,h*.70f,(game.renderDistance-180f)/240f);
             drawCheck(c,w*.33f,h*.785f,game.cloudsOn);
             text(c,"Nuvens 3D",w*.55f,h*.798f,16,0xFFEAF0F3,false);
@@ -99,7 +119,40 @@ public final class GameHud extends View {
         rounded(c,px-dp(24),py-dp(17),px+dp(24),py+dp(17),9,0x82334751);
         ink(0xFFFFE5BE); c.drawRoundRect(new RectF(px-dp(7),py-dp(9),px-dp(2),py+dp(9)),2,2,p);
         c.drawRoundRect(new RectF(px+dp(3),py-dp(9),px+dp(8),py+dp(9)),2,2,p);
-        text(c,"DESLIZE PARA OLHAR",w/2,h-dp(19),11,0xAFEBE7D9,false);
+        // Solas v0.4: 1 hotbar de acesso rapido; sete slots dentro da mochila.
+        float sz=dp(55),hotY=h-dp(43);
+        rounded(c,w*.5f-sz*.5f,hotY-sz*.5f,w*.5f+sz*.5f,hotY+sz*.5f,7,0xC3182435);
+        ring(c,w*.5f,hotY,sz*.54f,0xB6FFF0C3,1.4f);
+        if(game.selectedSlot==0){
+            if(slotSword!=null)drawSprite(c,slotSword,w*.5f,hotY,dp(44));
+            else text(c,"1",w*.5f,hotY+dp(10),24,0xFFFFFFFF,true);
+        }
+        else text(c,"-",w*.5f,hotY+dp(10),24,0x99FFFFFF,false);
+        float bagX=w-dp(41),bagY=dp(42);
+        rounded(c,bagX-dp(34),bagY-dp(33),bagX+dp(34),bagY+dp(33),8,0xC1142330);
+        if(backpack!=null)drawSprite(c,backpack,bagX,bagY,dp(52));
+        else text(c,"BAG",bagX,bagY+dp(5),15,0xFFFFFFFF,true);
+        if(game.selectedSlot==0){
+            float ax=w-dp(103),ay=h-dp(216);
+            rounded(c,ax-dp(40),ay-dp(40),ax+dp(40),ay+dp(40),10,0xB9142330);
+            if(actionIcon!=null)drawSprite(c,actionIcon,ax,ay,dp(64));
+            else text(c,"LUZ",ax,ay+dp(5),15,0xFFFFFFFF,true);
+        }
+        if(inventoryOpen){
+            ink(0xC70B111C);c.drawRect(0,0,w,h,p);
+            float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);
+            rounded(c,left-dp(17),top-dp(52),left+dp(4*82+17),top+dp(2*82+20),13,0xF0202938);
+            text(c,"MOCHILA   7 SLOTS",w*.5f,top-dp(17),18,0xFFF4EDDC,true);
+            for(int i=0;i<7;i++){
+                int row=i/4,col=i%4;
+                float cx=left+col*cell+cell*.5f,cy=top+row*cell+cell*.5f;
+                rounded(c,cx-cell*.43f,cy-cell*.43f,cx+cell*.43f,cy+cell*.43f,7,
+                        i==game.selectedSlot?0xCC6C5B38:0xCC111D2B);
+                ring(c,cx,cy,cell*.42f,i==game.selectedSlot?0xFFFFDA8A:0x889CB2BC,1.1f);
+                if(i==0 && slotSword!=null)drawSprite(c,slotSword,cx,cy,dp(50));
+            }
+            text(c,"TOQUE EM UM SLOT  •  MOCHILA PARA FECHAR",w*.5f,top+dp(2*82+8),10,0xFFE1E7E5,false);
+        }
         // Mira sutil no centro da tela.
         ring(c,w/2,h/2,dp(2.5f),0x80FFF4D7,1.2f);
     }
@@ -141,6 +194,23 @@ public final class GameHud extends View {
                 else if(within(x,y,w*.43f,h*.785f,w*.18f,h*.056f))game.setCloudsOn(!game.cloudsOn);
                 else if(Math.abs(y-h*.54f)<h*.050f){sliderId=id;sliderWhich=0;applySlider(x,w,0);}
                 else if(Math.abs(y-h*.70f)<h*.050f){sliderId=id;sliderWhich=1;applySlider(x,w,1);}
+            } else if(inventoryOpen && game.state==1){
+                float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);
+                if(within(x,y,w-dp(41),dp(42),dp(41),dp(41))){inventoryOpen=false;}
+                else {
+                    int col=(int)((x-left)/cell),row=(int)((y-top)/cell),slot=row*4+col;
+                    if(x>=left&&y>=top&&col>=0&&col<4&&row>=0&&row<2&&slot<7){
+                        game.selectedSlot=slot;inventoryOpen=false;
+                        game.renderer.swordAction(false);
+                    }
+                }
+            } else if(game.state==1 && within(x,y,w-dp(41),dp(42),dp(41),dp(41))){
+                inventoryOpen=true;game.renderer.move(0,0);
+                stickX=stickY=0;moveId=lookId=jumpId=actionId=-1;
+                game.renderer.swordAction(false);
+            } else if(game.state==1 && game.selectedSlot==0 &&
+                      within(x,y,w-dp(103),h-dp(216),dp(44),dp(45))){
+                actionId=id;game.renderer.swordAction(true);
             } else if(within(x,y,w/2,dp(28),dp(35),dp(29))) {
                 game.pause();
             } else if(x < w*.35f && y>h*.38f && moveId<0) {
@@ -167,6 +237,9 @@ public final class GameHud extends View {
             }
             if(lookId==id || action==MotionEvent.ACTION_CANCEL) lookId=-1;
             if(jumpId==id || action==MotionEvent.ACTION_CANCEL) jumpId=-1;
+            if(actionId==id || action==MotionEvent.ACTION_CANCEL){
+                actionId=-1;game.renderer.swordAction(false);
+            }
             if(sliderId==id || action==MotionEvent.ACTION_CANCEL){sliderId=-1;sliderWhich=-1;}
         }
         invalidate(); return true;

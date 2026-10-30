@@ -12,6 +12,7 @@ import android.widget.FrameLayout;
 public final class GameActivity extends Activity {
     // 0 = menu, 1 = jogando, 2 = pausa, 3 = configuracoes
     volatile int state = 0;
+    volatile int selectedSlot=0; // mochila 7 slots, espada inicial no slot zero
     GameRenderer renderer;
     GameHud hud;
     GLSurfaceView surface;
@@ -69,7 +70,7 @@ public final class GameActivity extends Activity {
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
     void play() {
-        renderer.reset(); state = 1;
+        selectedSlot=0;renderer.reset(); state = 1;
         hud.resetControls(); hud.invalidate();
         updateAudio();
     }

@@ -36,6 +36,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private float localForest=0f;
     private float groundedY=Float.NaN;
     private int rockProgram,rockTexture,cliffRockTexture;
+    private int moonTexture,starTexture;
+    private SwordModel sword;
+    private volatile boolean swordButtonHeld=false;
+    private float swordGlow=0f;
+    private final float[] swordLightPosition=new float[3];
+    private float localWheat=0f;
     private TreeModel broadleaf,pines;
     // Solas v3: geometria simplificada ate 2500m e LODs por especie.
     private TreeLodRenderer treeLods;
@@ -93,6 +99,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
 
     void move(float vx,float vy){stickX=vx;stickY=vy;}
     void jump(){jumpPressed=true;}
+    void swordAction(boolean active){swordButtonHeld=active;}
     void reset(){resetRequested=true;}
     synchronized void look(float dx,float dy){lookDX+=dx;lookDY+=dy;}
     private synchronized float[] consumeLook(){
@@ -105,6 +112,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glClearColor(.57f,.69f,.75f,1);
         meshP=program(Shaders.MESH_V,Shaders.MESH_F);
         skyP=program(Shaders.FULL_V,Shaders.SKY_F);
+        starTexture=loadImageTexture("stars_hipparcos_2048.png");
+        moonTexture=loadImageTexture("moon_128.png");
+        try{sword=new SwordModel(context,Shaders.SWORD_V,Shaders.SWORD_F);}
+        catch(Exception e){Log.w("Solas","Espada GLB indisponivel",e);sword=null;}
         brightP=program(Shaders.FULL_V,Shaders.BRIGHT_F);
         blurP=program(Shaders.FULL_V,Shaders.BLUR_F);
         finalP=program(Shaders.FULL_V,Shaders.FINAL_F);
@@ -165,7 +176,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
+        CelestialCycle.sunDirection(celestialTime,SUN);
         eclipse=CelestialCycle.eclipse(celestialTime);
+        // Glow final atualizado apos recalculo da orientacao da camera.
         CelestialCycle.moonDirection(celestialTime,SUN,moonDir);
         if(++lowCloudUpdate%24==0 && game.cloudsOn)
             CloudModel.fillLowCloudShadows(x,z,lowCloudDiscs);
@@ -219,6 +232,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 catch(Throwable e){Log.e("SolPixel","Terreno async",e);buildingWorld=false;}
             });
         }
+        // Eclipse/arma: direcao calculada apos update do jogador (sem frame atrasado).
+        float faceP=(float)Math.cos(pitch);
+        float aimSun=(float)Math.sin(yaw)*faceP*SUN[0]+(float)Math.sin(pitch)*SUN[1]-
+                     (float)Math.cos(yaw)*faceP*SUN[2];
+        float glowTarget=(game.selectedSlot==0 && swordButtonHeld && eclipse>.45f && aimSun>.965f)?1f:0f;
+        swordGlow+=(glowTarget-swordGlow)*Math.min(1f,dt*(glowTarget>0f?7f:9f));
         // Camera vertical amortecida, sem head-bob gerador de tremor.
         float surfaceY=Float.isNaN(groundedY)?World.height(x,z):groundedY;
         float targetEyeY=surfaceY+1.72f+airHeight;
@@ -226,6 +245,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             smoothedEyeY=targetEyeY;
         smoothedEyeY+=(targetEyeY-smoothedEyeY)*(1f-(float)Math.exp(-dt*13f));
         float eyeY=Math.max(smoothedEyeY,surfaceY+1.54f);
+        swordLightPosition[0]=x;swordLightPosition[1]=eyeY-.45f;swordLightPosition[2]=z;
         float cosP=(float)Math.cos(pitch),sinP=(float)Math.sin(pitch),
               cosY=(float)Math.cos(yaw),sinY=(float)Math.sin(yaw);
         forward[0]=sinY*cosP;forward[1]=sinP;forward[2]=-cosY*cosP;
@@ -240,7 +260,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // Estima bosque a frente, sem examinar milhares de arvores todo frame.
         if(++vegetationFrame%12==0){
             float a=World.forestDensity(x,z);
-            localForest=a; // Vagalumes SOMENTE se o jogador estiver dentro da floresta
+            localForest=a;
+            localWheat=World.wheatField(x,z); // incluindo planicies e campos de trigo
             float b=World.forestDensity(x+forward[0]*28f,z+forward[2]*28f);
             float c=World.forestDensity(x+forward[0]*60f,z+forward[2]*60f);
             forestNear=Math.min(1f,Math.max(a,Math.max(b,c))*1.6f);
@@ -343,6 +364,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         v3(skyP,"uMoonDir",moonDir);f1(skyP,"uEclipse",eclipse);
         f1(skyP,"uAspect",sceneW/(float)sceneH);
         f1(skyP,"uFov",(float)Math.tan(Math.toRadians(67)/2));
+        f1(skyP,"uSkyTime",celestialTime);
+        texture(4,starTexture);i1(skyP,"uStarMap",4);
+        texture(5,moonTexture);i1(skyP,"uMoonTex",5);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
         GLES30.glDepthMask(true);
@@ -364,6 +388,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         v3(meshP,"uGrassDayTint",grassTint);
         f1(meshP,"uDrawDistance",FarWorld.HORIZON);
         f1(meshP,"uEclipse",eclipse);
+        applySwordLight(meshP);
         GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
         texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
         f1(meshP,"uHasRockSurface",rockTexture!=0?1f:0f);
@@ -388,6 +413,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             v3(rockProgram,"uSun",SUN);
             f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
             f1(rockProgram,"uEclipse",eclipse);
+            applySwordLight(rockProgram);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
             texture(8,cliffRockTexture);i1(rockProgram,"uCliffRockTex",8);
             f1(rockProgram,"uHasCliffRock",cliffRockTexture!=0?1f:0f);
@@ -401,6 +427,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             v3(treeP,"uSun",SUN);
             f1(treeP,"uDrawDistance",FarWorld.HORIZON);
             f1(treeP,"uEclipse",eclipse);
+            applySwordLight(treeP);
             bindForestShadow(treeP);
             if(treeLods!=null){
                 treeLods.draw(treeP,activeDecoration.broadleafInstances,activeDecoration.pineInstances,
@@ -420,11 +447,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(grassP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
             f1(grassP,"uEclipse",eclipse);
+            applySwordLight(grassP);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
                          time,x,z,moveVelocityX,moveVelocityZ);
         }
         // Particulas pontuais e cintilantes, so durante o eclipse e na floresta local.
-        if(fireflies!=null && activeDecoration!=null && localForest>.29f && eclipse>.56f){
+        if(fireflies!=null && activeDecoration!=null && (localForest>.29f || localWheat>.22f) && eclipse>.56f){
             float night=Math.min(1f,Math.max(0f,(eclipse-.56f)/.35f));
             fireflies.draw(fireflyP,activeDecoration.fireflyInstances,vp,x,eyeY,z,time,night);
         }
@@ -437,6 +465,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(cloudP,"uEye"),x,eyeY,z);
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
             clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
+        }
+        if(sword!=null && game.state==1 && game.selectedSlot==0){
+            // HUD 3D de arma renderizado por ultimo, nao sofre oclusao pelo relevo.
+            sword.draw(proj,swordGlow,time);
         }
         // Poeira iluminada flutuante, sprites de ponto com textura radial.
         GLES30.glUseProgram(dustP);
@@ -532,6 +564,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glGenerateMipmap(GLES30.GL_TEXTURE_2D);bitmap.recycle();
             return id[0];
         }catch(Exception ex){Log.w("SolPixel","Textura indisponivel: "+filename,ex);return 0;}
+    }
+    /** Fonte de luz aproximadamente pontual, raio 5 m, sem cubemap de sombra. */
+    private void applySwordLight(int p){
+        f1(p,"uSwordGlow",swordGlow*.70f);
+        GLES30.glUniform3fv(loc(p,"uSwordLightPos"),1,swordLightPosition,0);
     }
     private void bindForestShadow(int program){
         boolean available=forestShadows!=null && forestShadows.ready();

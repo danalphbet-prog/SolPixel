@@ -441,6 +441,12 @@ public final class World {
             float wheatMacro=smooth(-.09f,.36f,noise(px*(.0049f/WHEAT_FIELD_SCALE)-155,pz*(.0049f/WHEAT_FIELD_SCALE)+177));
             float wheatIslands=smooth(-.33f,.13f,noise(px*(.017f/WHEAT_FIELD_SCALE)+55,pz*(.017f/WHEAT_FIELD_SCALE)-89));
             float wheatField=wheatMacro*(.58f+.42f*wheatIslands)*open;
+            // Solas 0.4: prados de trigo recebem pontos emissivos raros na posicao global.
+            if(wheatField>.22f && wood<.52f && n01(gx*61+13,gz*47-71)<.17f*wheatField){
+                float phase=n01(gx*27-43,gz*31+79)*6.2831853f;
+                fireflies.add(px);fireflies.add(height(px,pz)+.58f+1.6f*n01(gx*29+7,gz*43-19));
+                fireflies.add(pz);fireflies.add(phase);
+            }
             // Em campos de trigo, trigo supera grama; em prados, o contrario.
             float wheatChance=(.05f+.91f*wheatField)*open*smooth(.22f,.80f,wheatField);
             // Centro dos arquipelagos mais fechado, sem afetar os biomas de floresta.
