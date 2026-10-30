@@ -39,7 +39,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int moonTexture,starTexture;
     private SwordModel sword;
     private volatile boolean swordButtonHeld=false;
-    private float swordGlow=0f;
+    private boolean swordPressConsumed=false;
+    private float swordGlow=0f, swordGlowRemaining=0f;
+    private float swordRays=0f;
+    private final float[] swordTipUv={.45f,.60f};
+// SOLAS_V041_ECLIPSE_STARS_SWORD
     private final float[] swordLightPosition=new float[3];
     private float localWheat=0f;
     private TreeModel broadleaf,pines;
@@ -112,7 +116,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glClearColor(.57f,.69f,.75f,1);
         meshP=program(Shaders.MESH_V,Shaders.MESH_F);
         skyP=program(Shaders.FULL_V,Shaders.SKY_F);
-        starTexture=loadImageTexture("stars_hipparcos_2048.png");
+        // Transparent points reconstructed from EXR star coordinates, NOT the EXR sky texture.
+        starTexture=loadImageTexture("stars_points_2048.png");
         moonTexture=loadImageTexture("moon_128.png");
         try{sword=new SwordModel(context,Shaders.SWORD_V,Shaders.SWORD_F);}
         catch(Exception e){Log.w("Solas","Espada GLB indisponivel",e);sword=null;}
@@ -169,6 +174,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         bloomB=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
         // Nuvens alem de 1 km: aumentar clipping sem aumentar o raio do terreno.
         Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,4300f);
+        // Calculate view-space weapon tip using the same transform as SWORD_V.
+        float cs=.714f,sn=.700f, tipY=1.225f*.91f;
+        float[] tip={.65f-sn*tipY,-.69f+cs*tipY,-1.70f,1f};
+        float[] clip=new float[4]; Matrix.multiplyMV(clip,0,proj,0,tip,0);
+        if(clip[3]>.001f){
+            swordTipUv[0]=Math.max(.02f,Math.min(.98f,clip[0]/clip[3]*.5f+.5f));
+            swordTipUv[1]=Math.max(.02f,Math.min(.98f,clip[1]/clip[3]*.5f+.5f));
+        }
     }
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
@@ -236,8 +249,18 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float faceP=(float)Math.cos(pitch);
         float aimSun=(float)Math.sin(yaw)*faceP*SUN[0]+(float)Math.sin(pitch)*SUN[1]-
                      (float)Math.cos(yaw)*faceP*SUN[2];
-        float glowTarget=(game.selectedSlot==0 && swordButtonHeld && eclipse>.45f && aimSun>.965f)?1f:0f;
-        swordGlow+=(glowTarget-swordGlow)*Math.min(1f,dt*(glowTarget>0f?7f:9f));
+        boolean swordAim=(aimSun>.965f && eclipse>.15f);
+        // One tap near the eclipse starts a complete 40-second charge.
+        if(!swordButtonHeld)swordPressConsumed=false;
+        if(swordButtonHeld && !swordPressConsumed){
+            swordPressConsumed=true;
+            if(game.selectedSlot==0 && swordAim)swordGlowRemaining=40f;
+        }
+        if(game.state==1 && swordGlowRemaining>0f)
+            swordGlowRemaining=Math.max(0f,swordGlowRemaining-dt);
+        float glowTarget=game.selectedSlot==0 && swordGlowRemaining>0f?1f:0f;
+        swordGlow+=(glowTarget-swordGlow)*Math.min(1f,dt*(glowTarget>0f?9f:8f));
+        swordRays=glowTarget>0f && swordAim?swordGlow:0f;
         // Camera vertical amortecida, sem head-bob gerador de tremor.
         float surfaceY=Float.isNaN(groundedY)?World.height(x,z):groundedY;
         float targetEyeY=surfaceY+1.72f+airHeight;
@@ -245,12 +268,16 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             smoothedEyeY=targetEyeY;
         smoothedEyeY+=(targetEyeY-smoothedEyeY)*(1f-(float)Math.exp(-dt*13f));
         float eyeY=Math.max(smoothedEyeY,surfaceY+1.54f);
-        swordLightPosition[0]=x;swordLightPosition[1]=eyeY-.45f;swordLightPosition[2]=z;
+        // World space origin updated after forward/right/up vectors are known.
         float cosP=(float)Math.cos(pitch),sinP=(float)Math.sin(pitch),
               cosY=(float)Math.cos(yaw),sinY=(float)Math.sin(yaw);
         forward[0]=sinY*cosP;forward[1]=sinP;forward[2]=-cosY*cosP;
         right[0]=cosY;right[1]=0;right[2]=sinY;
         up[0]=-sinY*sinP;up[1]=cosP;up[2]=cosY*sinP;
+        // White point light follows the real world-space projection of the blade tip.
+        swordLightPosition[0]=x+forward[0]*1.6f-right[0]*.20f+up[0]*.18f;
+        swordLightPosition[1]=eyeY+forward[1]*1.6f+up[1]*.18f;
+        swordLightPosition[2]=z+forward[2]*1.6f-right[2]*.20f+up[2]*.18f;
         Matrix.setLookAtM(view,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
         Matrix.multiplyMM(vp,0,proj,0,view,0);
         if(forestShadows!=null && activeDecoration!=null){
@@ -278,6 +305,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
             smoothedEyeY=Float.NaN;
             groundedY=World.height(x,z);
+            swordGlowRemaining=0f;swordGlow=0f;swordRays=0f;
+            swordPressConsumed=false;swordButtonHeld=false;
             consumeLook();
         }
         float[] drag=consumeLook();
@@ -533,6 +562,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         }
         f1(finalP,"uSunVisible",solar);
         f1(finalP,"uEclipse",eclipse);
+        GLES30.glUniform2f(loc(finalP,"uSwordTipUv"),swordTipUv[0],swordTipUv[1]);
+        f1(finalP,"uSwordRays",swordRays);
         f1(finalP,"uForestNear",forestShadows!=null && forestShadows.ready()?forestNear:0f);
         fullTriangle();
         GLES30.glEnable(GLES30.GL_DEPTH_TEST);
@@ -567,7 +598,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     }
     /** Fonte de luz aproximadamente pontual, raio 5 m, sem cubemap de sombra. */
     private void applySwordLight(int p){
-        f1(p,"uSwordGlow",swordGlow*.70f);
+        f1(p,"uSwordGlow",swordGlow);
         GLES30.glUniform3fv(loc(p,"uSwordLightPos"),1,swordLightPosition,0);
     }
     private void bindForestShadow(int program){

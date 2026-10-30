@@ -134,7 +134,10 @@ public final class GameHud extends View {
         else text(c,"BAG",bagX,bagY+dp(5),15,0xFFFFFFFF,true);
         if(game.selectedSlot==0){
             float ax=w-dp(103),ay=h-dp(216);
-            rounded(c,ax-dp(40),ay-dp(40),ax+dp(40),ay+dp(40),10,0xB9142330);
+            boolean glowing=game.renderer.swordActive();
+            rounded(c,ax-dp(40),ay-dp(40),ax+dp(40),ay+dp(40),10,
+                    glowing?0xDA555C69:0xB9142330);
+            if(glowing) ring(c,ax,ay,dp(42),0xFFFFFFFF,2.5f);
             if(actionIcon!=null)drawSprite(c,actionIcon,ax,ay,dp(64));
             else text(c,"LUZ",ax,ay+dp(5),15,0xFFFFFFFF,true);
         }
@@ -153,6 +156,7 @@ public final class GameHud extends View {
             }
             text(c,"TOQUE EM UM SLOT  •  MOCHILA PARA FECHAR",w*.5f,top+dp(2*82+8),10,0xFFE1E7E5,false);
         }
+        if(game.renderer.swordActive())postInvalidateDelayed(120);
         // Mira sutil no centro da tela.
         ring(c,w/2,h/2,dp(2.5f),0x80FFF4D7,1.2f);
     }

@@ -1,11 +1,9 @@
 package com.solpixel.game;
 
-/** Solas v0.4: sol em arco 12-85 graus, eclipse na descida a 45 graus.
- * Manha: 0-180s 12->85; tarde: 180-300s 85->45; noite: 300-660s 45->12.
- * O ciclo se repete sem salto na altitude. A noite e a ocultacao sao fantásticas.
- */
+/** Solas v0.4.1: eclipse gradual desde primeiro contato. Tempo em segundos de jogo. */
 final class CelestialCycle {
     static final float DAY_SECONDS=300f,NIGHT_SECONDS=360f,PERIOD=660f;
+    static final float FIRST_CONTACT=260f,CENTER=300f,EXIT_START=600f,EXIT_END=660f;
     private CelestialCycle(){}
     static float timeInCycle(float t){float v=t%PERIOD;return v<0?v+PERIOD:v;}
     private static float smooth(float a,float b,float value){
@@ -20,7 +18,6 @@ final class CelestialCycle {
     }
     static void sunDirection(float elapsed,float[] out){
         float altitude=(float)Math.toRadians(elevationDegrees(elapsed));
-        // Arco solar norte-sul estavel, espelha o ciclo sem descer abaixo do horizonte.
         float azimuth=(float)Math.toRadians(146.5);
         float horizon=(float)Math.cos(altitude);
         out[0]=(float)Math.sin(azimuth)*horizon;
@@ -29,23 +26,29 @@ final class CelestialCycle {
     }
     static float eclipse(float elapsed){
         float t=timeInCycle(elapsed);
-        return smooth(DAY_SECONDS-4f,DAY_SECONDS+24f,t) *
-            (1f-smooth(PERIOD-24f,PERIOD,t));
+        return smooth(FIRST_CONTACT,CENTER,t)*(1f-smooth(EXIT_START,EXIT_END,t));
     }
+    /** Orbita estilizada; posicao aparente da Lua sempre vinculada ao Sol. */
     static void moonDirection(float elapsed,float[] sun,float[] out){
-        float t=timeInCycle(elapsed),phase=t/PERIOD;
-        // A lua cruza a linha do sol junto ao eclipse, girando seu eixo no sentido horario.
-        float drift=.096f*(float)Math.sin(2.0*Math.PI*(DAY_SECONDS-t)/PERIOD);
-        float angle=phase*(float)(2.0*Math.PI);
-        float ux=(float)Math.cos(angle),uy=-(float)Math.sin(angle);
-        // Base do plano perpendicular ao Sol (estavel para 85 graus).
-        float rx=-sun[2],rz=sun[0];
-        float rl=(float)Math.hypot(rx,rz);rx/=rl;rz/=rl;
+        float t=timeInCycle(elapsed);
+        // Primeira tangencia em 260 s; centro depois de 40 s. O alinhamento e
+        // preservado durante a noite, e a saida ocupa os ultimos 60 segundos.
+        float separation;
+        if(t<FIRST_CONTACT) separation=.052f+.21f*(1f-smooth(0f,FIRST_CONTACT,t));
+        else if(t<CENTER) separation=.052f*(1f-smooth(FIRST_CONTACT,CENTER,t));
+        else if(t<EXIT_START) separation=0f;
+        else separation=.262f*smooth(EXIT_START,EXIT_END,t);
+        // Os vetores tangentes fazem a Lua circundar a linha visual no sentido horario.
+        float angle=-2f*(float)Math.PI*t/PERIOD;
+        float rx=-sun[2],rz=sun[0],rl=(float)Math.hypot(rx,rz);
+        if(rl<.0001f){rx=1f;rz=0f;rl=1f;}
+        rx/=rl;rz/=rl;
         float bx=-sun[1]*rz,by=rl,bz=sun[1]*rx;
-        float mx=sun[0]+drift*(ux*rx+uy*bx);
-        float my=sun[1]+drift*uy*by;
-        float mz=sun[2]+drift*(ux*rz+uy*bz);
-        float m=(float)Math.sqrt(mx*mx+my*my+mz*mz);
-        out[0]=mx/m;out[1]=my/m;out[2]=mz/m;
+        float ca=(float)Math.cos(angle),sa=(float)Math.sin(angle);
+        float mx=sun[0]+separation*(ca*rx+sa*bx);
+        float my=sun[1]+separation*sa*by;
+        float mz=sun[2]+separation*(ca*rz+sa*bz);
+        float inv=1f/(float)Math.sqrt(mx*mx+my*my+mz*mz);
+        out[0]=mx*inv;out[1]=my*inv;out[2]=mz*inv;
     }
 }

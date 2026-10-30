@@ -158,12 +158,15 @@ final class Shaders {
             vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction*cloudShadow(vPos.xz);
             vec3 color=albedo*(ambient+direct);
             color*=1.0-clamp(vForest,0.0,1.0)*.17;
-            float swordAtt=1.0-smoothstep(0.2,5.0,length(vPos-uSwordLightPos));
-            color+=vec3(1.0,.66,.30)*swordAtt*uSwordGlow*.52;
+
             // solpixel-v08: nevoa atmosferica desde meia distancia.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
+            // Truly local white 5m additive illumination after eclipse darkening.
+            float radius=length(vPos-uSwordLightPos);
+            float attenuation=1.0-smoothstep(0.0,5.0,radius);
+            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             // 2.5-4 km: fewer color levels plus larger dither blocks.
             float farDetail=smoothstep(2500.0,4000.0,vDist);
@@ -226,10 +229,13 @@ final class Shaders {
             vec3 stone=mix(vec3(.30,.30,.29),vec3(.65,.64,.61),grain);
             float ambient=.34+.12*clamp(vNormal.y,0.0,1.0);
             vec3 color=stone*(ambient+vec3(1.03,.99,.88)*vLight*.75);
-            float swordAtt=1.0-smoothstep(.2,5.0,length(vWorld-uSwordLightPos));
-            color+=vec3(1.0,.66,.30)*swordAtt*uSwordGlow*.52;
+
             color=mix(color,vec3(.82,.92,1.0),smoothstep(uDrawDistance*.28,uDrawDistance*.9,vDist)*.87);
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
+            // Truly local white 5m additive illumination after eclipse darkening.
+            float radius=length(vWorld-uSwordLightPos);
+            float attenuation=1.0-smoothstep(0.0,5.0,radius);
+            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -250,6 +256,7 @@ final class Shaders {
         }
         """;
     // Solas v0.4: star positions preserved from user Hipparcos/starmap EXRs.
+    // Solas v0.4.1: dark blue procedural sky, star dots from EXR peak coordinates.
     static final String SKY_F = """
         #version 300 es
         precision highp float;
@@ -261,58 +268,62 @@ final class Shaders {
         const float PI=3.14159265359;
         float hash11(float n){return fract(sin(n*83.173+13.71)*43758.5453);}
         vec2 skyUV(vec3 dir){
-            // Equirectangular: star EXR was not warped, keeping relative sky positions.
-            return vec2(fract(.5+atan(dir.z,dir.x)/(2.0*PI)),.5-asin(clamp(dir.y,-1.0,1.0))/PI);
+            return vec2(fract(.5+atan(dir.z,dir.x)/(2.0*PI)),
+                        .5-asin(clamp(dir.y,-1.0,1.0))/PI);
         }
         float meteor(vec2 uv){
-            float period=37.0;
-            float id=floor(uSkyTime/period),t=fract(uSkyTime/period);
-            if(hash11(id*1.71)<.32 || t>.19)return 0.0;
-            vec2 start=vec2(.08+.8*hash11(id+16.7),.12+.32*hash11(id+4.9));
-            vec2 dir=normalize(vec2(.92,.28+.35*hash11(id+2.0)));
-            vec2 head=start+dir*t*.75;
-            vec2 delta=uv-head;delta.x=mod(delta.x+.5,1.0)-.5;
-            float along=dot(delta,dir);
-            float crossDist=abs(delta.x*dir.y-delta.y*dir.x);
-            float tail=smoothstep(-.19,0.0,along)*(1.0-smoothstep(0.0,.007,crossDist));
-            tail*=1.0-smoothstep(-.018,.01,along);
-            return tail*(1.0-smoothstep(.13,.19,t));
+            float id=floor(uSkyTime/37.0),t=fract(uSkyTime/37.0);
+            if(hash11(id*1.71)<.35 || t>.20)return 0.0;
+            vec2 start=vec2(.1+.75*hash11(id+16.7),.10+.36*hash11(id+4.9));
+            vec2 md=normalize(vec2(.9,.25+.4*hash11(id+2.0)));
+            vec2 delta=uv-(start+md*t*.85);delta.x=mod(delta.x+.5,1.0)-.5;
+            float along=dot(delta,md);
+            float crossDist=abs(delta.x*md.y-delta.y*md.x);
+            return smoothstep(-.14,0.0,along)*(1.0-smoothstep(.0,.0025,crossDist)) *
+                (1.0-smoothstep(-.01,.005,along))*(1.0-smoothstep(.15,.20,t));
         }
         void main(){
             vec2 q=(vUv*2.0-1.0)*vec2(uAspect,1.0)*uFov;
             vec3 dir=normalize(uForward+q.x*uRight+q.y*uUp);
-            float alt=smoothstep(-.18,.92,dir.y);
-            vec3 horizon=mix(vec3(.82,.92,1.0),vec3(.009,.015,.048),uEclipse);
-            vec3 zenith=mix(vec3(.32,.59,.89),vec3(.003,.006,.020),uEclipse);
-            vec3 sky=mix(horizon,zenith,alt)*.85;
+            float alt=smoothstep(-.15,.90,dir.y);
+            // Deliberately custom solid sky; no EXR RGB or HDR panorama background.
+            vec3 day=mix(vec3(.72,.83,.94),vec3(.27,.51,.78),alt);
+            vec3 night=mix(vec3(.039,.075,.126),vec3(.006,.011,.031),alt);
+            vec3 sky=mix(day,night,uEclipse);
             vec2 uv=skyUV(dir);
-            vec3 stars=texture(uStarMap,uv).rgb;
-            float starlight=smoothstep(.08,.45,max(stars.r,max(stars.g,stars.b)));
-            float bright=pow(starlight,5.0)*1.45;
-            sky+=(stars*1.65+vec3(bright))*uEclipse*smoothstep(-.22,.035,dir.y);
-            sky+=vec3(1.2,.73,.38)*meteor(uv)*uEclipse;
+            vec4 sprite=texture(uStarMap,uv);
+            float p=max(sprite.r,max(sprite.g,sprite.b))*sprite.a;
+            float twinkle=.87+.13*sin(uSkyTime*(.63+hash11(floor(uv.x*1024.0))*1.6)+uv.x*583.0);
+            float visibility=uEclipse*smoothstep(-.20,.05,dir.y);
+            sky+=sprite.rgb*(.8+1.8*p)*visibility*twinkle;
+            // Brightest catalog stars are clearly visible and lightly haloed.
+            sky+=vec3(1.0,1.04,1.15)*pow(p,7.0)*.65*visibility;
+            sky+=vec3(1.20,1.34,1.59)*meteor(uv)*visibility;
             float sun=dot(dir,normalize(uSun));
             float disc=smoothstep(.99972,.99985,sun);
-            float halo=pow(max(sun,0.0),75.0)*.38+pow(max(sun,0.0),13.0)*.07;
-            sky+=vec3(1.0,.73,.43)*halo*mix(1.0,.35,uEclipse);
-            sky=mix(sky,vec3(1.65,1.30,.86),disc*(1.0-uEclipse*.45));
-            float moonDot=dot(dir,normalize(uMoonDir));
+            float halo=pow(max(sun,0.0),75.0)*.37+pow(max(sun,0.0),13.0)*.06;
+            sky+=vec3(1.0,.73,.43)*halo*mix(1.0,.23,uEclipse);
+            sky=mix(sky,vec3(1.62,1.30,.91),disc);
             vec3 mdir=normalize(uMoonDir);
+            float moonDot=dot(dir,mdir);
             vec3 east=normalize(cross(vec3(0.0,1.0,0.0),mdir));
             vec3 north=cross(mdir,east);
-            vec2 moonXY=vec2(dot(dir,east),dot(dir,north))/.026;
-            vec2 moonUV=moonXY*.5+.5;
-            if(all(greaterThanEqual(moonUV,vec2(0.0))) && all(lessThanEqual(moonUV,vec2(1.0))) && moonDot>.99930){
+            vec2 moonUV=vec2(dot(dir,east),dot(dir,north))/.052 + .5;
+            if(all(greaterThanEqual(moonUV,vec2(0.0))) &&
+               all(lessThanEqual(moonUV,vec2(1.0))) && moonDot>.9985){
                 vec4 moon=texture(uMoonTex,moonUV);
-                float shadow=1.0-.91*uEclipse*smoothstep(.995,.9999,sun);
-                vec3 moonLit=moon.rgb*(.82+.18*hash11(floor(gl_FragCoord.x/3.0)+floor(gl_FragCoord.y/3.0)*91.0));
-                moonLit*=shadow;
-                // Lua mais clara e levemente pontilhada de dia.
-                moonLit=mix(moonLit,moonLit*.93+vec3(.06),.5*(1.0-uEclipse));
-                sky=mix(sky,moonLit,moon.a);
+                // Lunar disc obscures the sun, becoming black where solar overlap occurs.
+                float overlap=smoothstep(.9983,.99975,sun);
+                float shaded=clamp(uEclipse*overlap,0.0,1.0);
+                vec3 tint=moon.rgb*mix(1.0,.06,shaded);
+                float dither=mod(floor(gl_FragCoord.x/3.0)+
+                                 2.0*mod(floor(gl_FragCoord.y/3.0),2.0),4.0);
+                tint*=mix(.91,1.02,dither/3.0);
+                sky=mix(sky,tint,moon.a);
             }
-            float ring=exp(-pow((1.0-sun-.00015)*11500.0,2.0));
-            sky+=vec3(1.25,.72,.31)*ring*uEclipse*.8;
+            // Only near totality is the solar corona especially bright.
+            float ring=exp(-pow((1.0-sun-.00030)*8000.0,2.0));
+            sky+=vec3(1.22,.75,.36)*ring*pow(uEclipse,3.0)*.80;
             outColor=vec4(sky,1.0);
         }
         """;
@@ -329,15 +340,15 @@ final class Shaders {
         out vec2 vUv;
         out vec3 vNormal;
         void main(){
-            float cs=.76,sn=.65;
-            vec3 p=aPos*.70;
-            // GLB Y e vertical. Rotacao Z diagonal da espada na mao direita.
-            vec3 sword=vec3(p.x*cs+p.y*sn,-p.x*sn+p.y*cs,p.z);
-            sword+=vec3(.64,-.69,-1.40);
+            // 30% larger; tip leans to screen LEFT, hilt stays at bottom RIGHT.
+            float cs=.714,sn=.700;
+            vec3 p=aPos*.91;
+            vec3 sword=vec3(p.x*cs-p.y*sn,p.x*sn+p.y*cs,p.z);
+            sword+=vec3(.65,-.69,-1.70);
             sword.y+=sin(uTime*1.4)*.004;
             gl_Position=uProjection*vec4(sword,1.0);
             vUv=aUv;
-            vNormal=normalize(vec3(aNormal.x*cs+aNormal.y*sn,-aNormal.x*sn+aNormal.y*cs,aNormal.z));
+            vNormal=normalize(vec3(aNormal.x*cs-aNormal.y*sn,aNormal.x*sn+aNormal.y*cs,aNormal.z));
         }
         """;
     static final String SWORD_F = """
@@ -350,8 +361,9 @@ final class Shaders {
         out vec4 outColor;
         void main(){
             vec4 tex=texture(uSwordTexture,vUv);
-            float light=.55+.38*max(0.0,dot(normalize(vNormal),normalize(vec3(-.4,.75,1.0))));
-            vec3 color=tex.rgb*light+vec3(1.0,.73,.34)*uGlow*.70;
+            float light=.58+.40*max(0.0,dot(normalize(vNormal),normalize(vec3(-.4,.75,1.0))));
+            // White emission brighter than 1.0 enters the existing bloom pass.
+            vec3 color=tex.rgb*light+vec3(2.65,2.72,2.90)*uGlow;
             outColor=vec4(color,tex.a);
         }
         """;
@@ -390,7 +402,8 @@ final class Shaders {
         precision highp float;
         in vec2 vUv;
         uniform sampler2D uScene,uDepth,uBloom;
-        uniform vec2 uTexel,uSunUv;
+        uniform vec2 uTexel,uSunUv,uSwordTipUv;
+        uniform float uSwordRays;
         uniform float uSunVisible;
         uniform float uForestNear,uEclipse;
         out vec4 outColor;
@@ -447,12 +460,21 @@ final class Shaders {
                 // pelo depth buffer; influencia apenas objetos ate 100m.
                 float nearby=1.0-smoothstep(46.0,100.0,dist);
                 float forestShafts=shafts*uForestNear*nearby*.95;
-                color+=vec3(1.0,.79,.55)*uSunVisible*
-                       (sunGate*(halo+spikes+shafts)+forestShafts);
+                // During eclipse reduce the original sunlight god-rays by 30%.
+                color+=vec3(1.0,.79,.55)*uSunVisible*(1.0-uSwordRays)*
+                       mix(1.0,.70,uEclipse)*(sunGate*(halo+spikes+shafts)+forestShafts);
             }
+            // Redirect rays to the tip of the drawn GLB sword when aiming at eclipse.
+            vec2 fromTip=vUv-uSwordTipUv;
+            float tipDist=length(fromTip);
+            float tipAngle=atan(fromTip.y,fromTip.x);
+            float spike=pow(abs(cos(tipAngle*11.0)),15.0)*exp(-tipDist*3.6);
+            float whiteHalo=exp(-tipDist*14.0)*1.9+exp(-tipDist*42.0)*2.2;
+            color+=vec3(1.65,1.75,1.95)*uSwordRays*(spike*.85+whiteHalo);
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));
-            color*=mix(1.0,.68,uEclipse); // mantem halo do eclipse, mas noite escura
+            // The night remains dark; the local white illumination is added per material.
+            color*=mix(1.0,.68,uEclipse);
             float vignette=1.0-.20*dot(vUv-.5,vUv-.5);
             outColor=vec4(color*vignette,1.0);
         }
@@ -634,9 +656,12 @@ final class Shaders {
             ambient*=1.0-vForest*.30;
             float canopy=1.-vForest*(uLeaf>.5?.30:.37);
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
-            color+=vec3(1.0,.66,.30)*uSwordGlow*.40*
-                (1.0-smoothstep(.2,5.0,length(vWorld-uSwordLightPos)));
+
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
+            // Truly local white 5m additive illumination after eclipse darkening.
+            float radius=length(vWorld-uSwordLightPos);
+            float attenuation=1.0-smoothstep(0.0,5.0,radius);
+            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
@@ -716,9 +741,12 @@ final class Shaders {
             vec3 dayTint=mix(vec3(1.0),uGrassTint,influence);
             vec3 color=tex.rgb*dayTint;
             color*=mix(.83,1.15,clamp(vShade,0.0,1.0));
-            color+=vec3(1.0,.66,.30)*uSwordGlow*.48*
-                (1.0-smoothstep(.2,5.0,length(vWorld-uSwordLightPos)));
+
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
+            // Truly local white 5m additive illumination after eclipse darkening.
+            float radius=length(vWorld-uSwordLightPos);
+            float attenuation=1.0-smoothstep(0.0,5.0,radius);
+            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
             outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;
