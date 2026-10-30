@@ -62,6 +62,7 @@ final class FarWorld {
             float vx=px-cx,vz=pz-cz;
             float ds=vx*vx+vz*vz;
             if(ds<minR*minR||ds>maxR*maxR)continue;
+            if(TerrainGeology.slope(px,pz)>.90f)continue;
             float forest=World.forestDensity(px,pz);
             if(forest<.27f)continue;
             float odds=chance*(.15f+.85f*forest);

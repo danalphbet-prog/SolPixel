@@ -1,7 +1,9 @@
 name: Compilar APK Sol Pixel
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'solas-v0.2-*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   build:

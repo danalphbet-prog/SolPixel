@@ -42,7 +42,8 @@ public final class World {
     private static float smooth(float a,float b,float x){
         float t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);
     }
-    static float height(float x,float z){
+    static float height(float x,float z){return TerrainDetails.apply(x,z,baseHeight(x,z));}
+    static float baseHeight(float x,float z){
         // Planicies, colinas baixas/altas e montanhas com cumes largos.
         float wx=x+noise(x*.0025f+7,z*.0025f+9)*39f;
         float wz=z+noise(x*.0025f-8,z*.0025f+27)*39f;
@@ -77,7 +78,23 @@ public final class World {
     }
     /** Densidade multi-escala: manchas extensas, microclareiras e bordas orgânicas.
      *  Nao existe um contador de arvores por cluster: cada ponto e aceito pela mascara. */
+    /** Mascara primaria de floresta sem depender da altura (evita recursao). */
+    static float forestTerrainMask(float x,float z){
+        float scale=Math.max(.65f,CLUSTER_SCALE);
+        float bx=x/scale,bz=z/scale;
+        float wx=bx+noise(bx*.0021f+31,bz*.0021f-22)*94f;
+        float wz=bz+noise(bx*.0021f-71,bz*.0021f+17)*94f;
+        float macro=noise(wx*.00325f+19,wz*.00325f-83)*.82f+
+                    noise(wx*.009f-6,wz*.009f+9)*.18f;
+        return smooth(-.42f,.06f,macro);
+    }
     static float forestDensity(float x,float z){
+        float h=height(x,z);
+        float slope=Math.abs(height(x+3,z)-height(x-3,z))+
+                    Math.abs(height(x,z+3)-height(x,z-3));
+        return forestDensity(x,z,h,slope);
+    }
+    private static float forestDensity(float x,float z,float h,float slope){
         // Campos correlacionados, sem limite de arvores por cluster.
         // Noise continental = macicos extensos; ruido secundario = clareiras e bordas.
         float scale=Math.max(.65f,CLUSTER_SCALE);
@@ -94,9 +111,6 @@ public final class World {
         float wideClear=1f-smooth(.29f,.52f,noise(wx*.0044f-63,wz*.0044f+115));
         float smallClear=1f-.90f*smooth(.34f,.58f,noise(wx*.018f+61,wz*.018f-34));
         float coverage=mass*(.70f+.30f*subgroup)*openings*wideClear*smallClear;
-        float h=height(x,z);
-        float slope=Math.abs(height(x+3,z)-height(x-3,z))+
-                    Math.abs(height(x,z+3)-height(x,z-3));
         // Solas v3: provincias umidas podem colonizar cumes e platos amplos,
         // mas outras montanhas continuam sem floresta. Nenhuma altitude e veto fixo.
         float lowAltitude=1f-smooth(76,138,h);
@@ -104,7 +118,7 @@ public final class World {
         float summitOpenings=1f-.78f*smooth(.23f,.57f,noise(x*.0042f-253f,z*.0042f+117f));
         float mountainWood=smooth(90f,145f,h)*mountainClimate*summitOpenings;
         float altitude=Math.max(lowAltitude,mountainWood);
-        float steep=1f-smooth(9,23,slope);
+        float steep=1f-smooth(3.3f,7.0f,slope);
         float spawn=smooth(34,83,(float)Math.hypot(x,z));
         return Math.max(0,Math.min(1,coverage*steep*altitude*spawn));
     }
@@ -122,24 +136,66 @@ public final class World {
         float step=(radius*2f)/(SAMPLES-1);
         float left=cx-radius,top=cz-radius;
         FloatList v=new FloatList();ShortList ids=new ShortList();
-        for(int z=0;z<SAMPLES;z++)for(int x=0;x<SAMPLES;x++){
-            float wx=left+x*step,wz=top+z*step,h=height(wx,wz);
-            float dx=height(wx-1,wz)-height(wx+1,wz);
-            float dz=height(wx,wz-1)-height(wx,wz+1);
-            float len=(float)Math.sqrt(dx*dx+dz*dz+4);
-            // Fracao do atributo material codifica o sombreamento de vegetacao.
-            // O mesmo campo geologico dirige o solo CINZA e os blocos GLB.
-            float grad=(float)Math.hypot(dx,dz)*.5f;
-            float stone=TerrainGeology.rockExposure(wx,wz,grad,h);
-            vert(v,wx,h,wz,dx/len,2/len,dz/len,wx*.21f,wz*.21f,
-                 forestDensity(wx,wz)*.95f,stone);
-        }
+        // Malha original permanece completa nas bordas e casa com o anel distante.
+        for(int z=0;z<SAMPLES;z++)for(int x=0;x<SAMPLES;x++)
+            groundVertex(v,left+x*step,top+z*step,Float.NaN);
+        final int center=(SAMPLES-1)/2;
+        final int half=TerrainDetails.TERRAIN_DETAIL_LOD_ENABLED?
+            TerrainDetails.NEAR_DETAIL_HALF_CELLS:0;
         for(int z=0;z<SAMPLES-1;z++)for(int x=0;x<SAMPLES-1;x++){
+            // Remove as faces centrais antes de inserir a malha fina (sem z-fighting).
+            if(half>0 && x>=center-half && x<center+half &&
+               z>=center-half && z<center+half)continue;
             int a=z*SAMPLES+x,b=a+SAMPLES;
             ids.add(a);ids.add(b);ids.add(a+1);
             ids.add(a+1);ids.add(b);ids.add(b+1);
         }
+        if(half>0){
+            final int subdiv=Math.max(2,TerrainDetails.NEAR_DETAIL_SUBDIVISIONS);
+            final int steps=2*half*subdiv;
+            final int start=center-half;
+            final int firstVertex=v.n/10;
+            for(int iz=0;iz<=steps;iz++)for(int ix=0;ix<=steps;ix++){
+                float gx=start+ix/(float)subdiv,gz=start+iz/(float)subdiv;
+                float px=left+gx*step,pz=top+gz*step;
+                float forced=Float.NaN;
+                // Borda refinada linear nos vertices do anel grosso:
+                // evita T-junction e rachaduras ate com declives muito abruptos.
+                if(iz==0 || iz==steps){
+                    int tile=ix/subdiv;
+                    float t=(ix%subdiv)/(float)subdiv;
+                    int c=Math.min(SAMPLES-2,start+tile);
+                    float zz=top+(iz==0?start:start+2*half)*step;
+                    forced=height(left+c*step,zz)*(1f-t)+
+                           height(left+(c+1)*step,zz)*t;
+                }else if(ix==0 || ix==steps){
+                    int tile=iz/subdiv;
+                    float t=(iz%subdiv)/(float)subdiv;
+                    int c=Math.min(SAMPLES-2,start+tile);
+                    float xx=left+(ix==0?start:start+2*half)*step;
+                    forced=height(xx,top+c*step)*(1f-t)+
+                           height(xx,top+(c+1)*step)*t;
+                }
+                groundVertex(v,px,pz,forced);
+            }
+            int width=steps+1;
+            for(int z=0;z<steps;z++)for(int x=0;x<steps;x++){
+                int a=firstVertex+z*width+x,b=a+width;
+                ids.add(a);ids.add(b);ids.add(a+1);
+                ids.add(a+1);ids.add(b);ids.add(b+1);
+            }
+        }
         return new Mesh(v.array(),ids.array());
+    }
+    private static void groundVertex(FloatList v,float x,float z,float overrideY){
+        float h=Float.isNaN(overrideY)?height(x,z):overrideY;
+        float dx=height(x-1f,z)-height(x+1f,z);
+        float dz=height(x,z-1f)-height(x,z+1f);
+        float len=(float)Math.sqrt(dx*dx+dz*dz+4f);
+        float grad=(float)Math.hypot(dx,dz)*.5f;
+        float stone=TerrainGeology.rockExposure(x,z,grad,h);
+        vert(v,x,h,z,dx/len,2f/len,dz/len,x*.21f,z*.21f,
+            forestDensity(x,z,h,Math.abs(dx)+Math.abs(dz))*.95f,stone);
     }
     static class Tree {
         float x,y,z,scale,cos,sin,shade,radius;
@@ -191,7 +247,7 @@ public final class World {
             float distance=(float)Math.sqrt(dist2);
             // Nao afinar as arvores conforme o player se aproxima.
             float density=forestDensity(px,pz);
-            if(density<.11f)continue;
+            if(density<.11f || TerrainGeology.slope(px,pz)>.90f)continue;
             float core=smooth(.16f,.74f,density);
             float probability=Math.min(.96f,(.18f+.82f*core)*densityControl);
             probability*=smooth(.07f,.32f,density);
@@ -359,7 +415,7 @@ public final class World {
             if(dx*dx+dz*dz>grassRadius*grassRadius)continue;
             float slope=Math.abs(height(px+1f,pz)-height(px-1f,pz))+
                         Math.abs(height(px,pz+1f)-height(px,pz-1f));
-            if(slope>2.9f)continue;
+            if(slope>5.2f)continue;
             float elevation=height(px,pz);
             float forest=forestDensity(px,pz);
             float wood=smooth(.18f,.70f,forest);
@@ -500,6 +556,21 @@ public final class World {
                 if(d<.001f){dx=limit;dz=0;d=limit;}
                 px=t.x+dx/d*limit;pz=t.z+dz/d*limit;
             }
+        }
+        // Colisores leves para pedras GLB proximas: sem collider distante.
+        float[] stones=decoration.rockInstances;
+        if(stones!=null)for(int o=0;o+8<stones.length;o+=9){
+            float rx=stones[o],rz=stones[o+2];
+            float rockRadius=Math.min(4.5f,Math.max(stones[o+3],stones[o+5])*.47f);
+            float limit=radius+rockRadius;
+            float dx=px-rx,dz=pz-rz;
+            if(Math.abs(dx)>limit+.5f || Math.abs(dz)>limit+.5f)continue;
+            float d2=dx*dx+dz*dz;
+            if(d2>25f || d2>=limit*limit)continue; // ativacao em 5 m
+            float distance=(float)Math.sqrt(d2);
+            if(distance<.0001f){dx=1f;dz=0f;distance=1f;}
+            px=rx+dx/distance*limit;
+            pz=rz+dz/distance*limit;
         }
         position[0]=px;position[1]=pz;
     }

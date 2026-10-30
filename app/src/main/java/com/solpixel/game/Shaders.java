@@ -51,8 +51,8 @@ final class Shaders {
         uniform sampler2D uGround;
         uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
         uniform float uHasTerrainTextures;
-        uniform sampler2D uRockSurfaceTex;
-        uniform float uHasRockSurface;
+        uniform sampler2D uRockSurfaceTex,uCliffRockTex;
+        uniform float uHasRockSurface,uHasCliffRock,uCliffMoss;
         uniform vec3 uGrassDayTint;
         uniform vec3 uSun;
         uniform float uDrawDistance;
@@ -121,6 +121,19 @@ final class Shaders {
                     // O atributo ja inclui inclinacao e provincias rochosas.
                     // Sem padrao generico em TODA parede: pedra so onde o campo indica.
                     float coverage=smoothstep(.105,.57,vStoneMask)*(.83+.17*vPatch);
+                    if(uHasCliffRock>.5 && coverage>.03){
+                        vec3 newRock=texture(uCliffRockTex,vPos.yz*.16).rgb*weight.x+
+                                     texture(uCliffRockTex,vPos.xz*.16).rgb*weight.y+
+                                     texture(uCliffRockTex,vPos.xy*.16).rgb*weight.z;
+                        // Inicia em declive de ~50%, predomina acima de ~55 graus.
+                        float cliffShare=smoothstep(.08,.45,1.0-n.y);
+                        rockColor=mix(rockColor,newRock,cliffShare);
+                        if(uCliffMoss>.5 && cliffShare>.10){
+                            float moss=smoothstep(.65,.92,hash(floor(vPos.xz*.17)+
+                                                              floor(vPos.y*.19)));
+                            rockColor*=mix(vec3(1.0),vec3(.68,.86,.66),moss*.23);
+                        }
+                    }
                     albedo=mix(albedo,rockColor,coverage);
                 }
             } else if(vMat==1){
@@ -163,7 +176,7 @@ final class Shaders {
         uniform mat4 uMvp;
         uniform vec3 uEye,uSun;
         out vec3 vNormal,vLocal;
-        out float vLight,vDist;
+        out float vLight,vDist,vRockVariant;
         void main(){
             float cs=aScaleRot.z,sn=aScaleRot.w;
             vec3 p=aPos*vec3(aLocationScaleX.w,aScaleRot.x,aScaleRot.y);
@@ -172,6 +185,7 @@ final class Shaders {
             vNormal=normalize(vec3(n.x*cs-n.z*sn,n.y,n.x*sn+n.z*cs));
             vec3 world=aLocationScaleX.xyz+r;
             vLocal=aPos*4.0;
+            vRockVariant=fract(sin(dot(aLocationScaleX.xz,vec2(12.9898,78.233)))*43758.5453);
             vLight=max(0.0,dot(vNormal,normalize(uSun)));
             vDist=distance(world,uEye);
             gl_Position=uMvp*vec4(world,1.0);
@@ -181,8 +195,9 @@ final class Shaders {
         #version 300 es
         precision highp float;
         in vec3 vNormal,vLocal;
-        in float vLight,vDist;
-        uniform sampler2D uRockTex;
+        in float vLight,vDist,vRockVariant;
+        uniform sampler2D uRockTex,uCliffRockTex;
+        uniform float uHasCliffRock;
         uniform float uDrawDistance,uEclipse;
         out vec4 outColor;
         void main(){
@@ -190,6 +205,12 @@ final class Shaders {
             vec3 tex=texture(uRockTex,vLocal.yz).rgb*w.x+
                      texture(uRockTex,vLocal.xz).rgb*w.y+
                      texture(uRockTex,vLocal.xy).rgb*w.z;
+            if(uHasCliffRock>.5 && vRockVariant>.69){
+                vec3 alt=texture(uCliffRockTex,vLocal.yz).rgb*w.x+
+                         texture(uCliffRockTex,vLocal.xz).rgb*w.y+
+                         texture(uCliffRockTex,vLocal.xy).rgb*w.z;
+                tex=mix(tex,alt,.90);
+            }
             float grain=dot(tex,vec3(.33333));
             vec3 stone=mix(vec3(.30,.30,.29),vec3(.65,.64,.61),grain);
             float ambient=.34+.12*clamp(vNormal.y,0.0,1.0);

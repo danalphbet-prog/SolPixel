@@ -53,7 +53,11 @@ final class TerrainGeology {
         float tall=smooth(70f,205f,altitude);
         float bedrock=province*(.23f+.77f*streak)*(.83f+.17f*secondary);
         // Elevacao so aumenta um pouco a chance; nao obriga picos rochosos.
-        return clamp(bedrock*(.11f+.84f*steep+.05f*tall)*(1f-.96f*green));
+        float natural=clamp(bedrock*(.11f+.84f*steep+.05f*tall)*(1f-.96f*green));
+        // Acima de 50% de declive a pedra entra progressivamente;
+        // acima de ~55 graus, e praticamente integral, independente da provincia.
+        float forced=smooth(.50f,1.48f,gradient);
+        return Math.max(natural,forced);
     }
     static float rockExposure(float x,float z) {
         return rockExposure(x,z,slope(x,z),World.height(x,z));

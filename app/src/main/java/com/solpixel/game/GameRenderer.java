@@ -29,7 +29,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private MeshGpu ground,objects,shadows;
     // Solas Rocks v1: GLBs instanciados com LOD e material de pedra.
     private RockModel rocks;
-    private int rockProgram,rockTexture;
+    private int rockProgram,rockTexture,cliffRockTexture;
     private TreeModel broadleaf,pines;
     // Solas v3: geometria simplificada ate 2500m e LODs por especie.
     private TreeLodRenderer treeLods;
@@ -117,6 +117,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         hasTerrainTextures=(terrainDirt!=0 && terrainMiddle!=0 && terrainGrass!=0);
         cloudMask=loadImageTexture("cloud_mask.png");
         rockTexture=loadImageTexture("rock_texture.png");
+        cliffRockTexture=TerrainDetails.CLIFF_ROCK_TEXTURE_ENABLED?
+            loadImageTexture("cliff_rock_64.png"):0;
+        if(cliffRockTexture!=0){
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,cliffRockTexture);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_S,GLES30.GL_MIRRORED_REPEAT);
+            GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D,GLES30.GL_TEXTURE_WRAP_T,GLES30.GL_MIRRORED_REPEAT);
+        }
         try{rocks=new RockModel(context);}catch(Exception ex){Log.e("Solas","GLB de rochas indisponiveis",ex);rocks=null;}
         try{grasses=new GrassModel(context);}
         catch(Exception ex){Log.e("SolPixel","Falha ao iniciar grama",ex);}
@@ -184,9 +191,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         int desired=game.renderDistance;
         if(!buildingWorld && (ground==null||worldRadius!=desired ||
             appliedWorldRevision!=game.worldRevision ||
-            Math.abs(x-baseX)>Math.max(45f,desired*.29f)||
-            Math.abs(z-baseZ)>Math.max(45f,desired*.29f))){
-            final float cx=Math.round(x/48f)*48f,cz=Math.round(z/48f)*48f;
+            Math.abs(x-baseX)>Math.max(24f,desired*.15f)||
+            Math.abs(z-baseZ)>Math.max(24f,desired*.15f))){
+            final float cx=Math.round(x/32f)*32f,cz=Math.round(z/32f)*32f;
             final float radius=desired;
             buildingWorld=true;
             pendingWorldRevision=game.worldRevision;
@@ -275,7 +282,18 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             x=collisionPoint[0];z=collisionPoint[1];
             if(Math.abs(x-targetX)>.018f)moveVelocityX*=.22f;
             if(Math.abs(z-targetZ)>.018f)moveVelocityZ*=.22f;
-            step+=(float)Math.hypot(x-oldX,z-oldZ);
+            float traveled=(float)Math.hypot(x-oldX,z-oldZ);
+            float rise=World.height(x,z)-World.height(oldX,oldZ);
+            // Heightmap funciona como colisao solida: nao atravessar paredoes.
+            if(rise>.11f+traveled*.92f){
+                x=oldX;z=oldZ;moveVelocityX*=.12f;moveVelocityZ*=.12f;
+            }else{
+                // Saida de um plato alto preserva altitude e inicia queda real.
+                if(airHeight<=.001f && -rise>.18f+traveled*1.12f){
+                    airHeight=-rise;vy=Math.min(vy,0f);
+                }
+                step+=traveled;
+            }
         }
         if(jumpPressed){
             if(airHeight<=.001f){vy=6.6f;airHeight=.003f;}
@@ -323,6 +341,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
         texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
         f1(meshP,"uHasRockSurface",rockTexture!=0?1f:0f);
+        texture(8,cliffRockTexture);i1(meshP,"uCliffRockTex",8);
+        f1(meshP,"uHasCliffRock",cliffRockTexture!=0?1f:0f);
+        f1(meshP,"uCliffMoss",TerrainDetails.CLIFF_MOSS_ENABLED?1f:0f);
         // Anel externo compartilha exatamente a borda do solo proximo.
         if(farGround!=null)farGround.draw();
         if(ground!=null)ground.draw();
@@ -342,6 +363,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
             f1(rockProgram,"uEclipse",eclipse);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
+            texture(8,cliffRockTexture);i1(rockProgram,"uCliffRockTex",8);
+            f1(rockProgram,"uHasCliffRock",cliffRockTexture!=0?1f:0f);
             rocks.drawCulled(rockProgram,activeDecoration.rockInstances,x,z,forward[0],forward[2],game.renderDistance);
         }
         // Duas especies GLB, geometria compartilhada; instancing evita centenas de draws.
