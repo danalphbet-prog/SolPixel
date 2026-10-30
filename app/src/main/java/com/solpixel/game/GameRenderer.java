@@ -47,6 +47,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private final float[] swordLightPosition=new float[3];
     private float localWheat=0f;
     private TreeModel broadleaf,pines;
+    private MacieiraRenderer macieiras;
+    private MacieiraRenderer.Placement[] activeMacieiras;
     // Solas v3: geometria simplificada ate 2500m e LODs por especie.
     private TreeLodRenderer treeLods;
     private MeshGpu farGround,nextFarGround;
@@ -81,8 +83,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private static final class BuildResult {
         final float x,z;final World.Mesh ground;final World.Decoration decoration;
         final FarWorld far;
-        BuildResult(float x,float z,World.Mesh m,World.Decoration d,FarWorld far){
+        final MacieiraRenderer.Placement[] macieiraPlacements;
+        BuildResult(float x,float z,World.Mesh m,World.Decoration d,FarWorld far,
+                    MacieiraRenderer.Placement[] macieiras){
             this.x=x;this.z=z;this.ground=m;this.decoration=d;this.far=far;
+            this.macieiraPlacements=macieiras;
         }
     }
     private int dustVao,dustVbo,dustCount;
@@ -104,6 +109,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     void move(float vx,float vy){stickX=vx;stickY=vy;}
     void jump(){jumpPressed=true;}
     void swordAction(boolean active){swordButtonHeld=active;}
+    // Necessario para os icones GameHud da v0.4.1.
+    boolean swordActive(){return swordGlowRemaining>0f && game.selectedSlot==0;}
     void reset(){resetRequested=true;}
     synchronized void look(float dx,float dy){lookDX+=dx;lookDY+=dy;}
     private synchronized float[] consumeLook(){
@@ -159,6 +166,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             pines=new TreeModel(context,"arvore-2.glb");
             treeLods=new TreeLodRenderer(context,broadleaf,pines);
         } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores/LODs GLB",ex);}
+        try{macieiras=new MacieiraRenderer(context);}
+        catch(Throwable ex){Log.e("Solas","Modelos de macieiras indisponiveis",ex);macieiras=null;}
         makeDust();
         baseX=99999f;baseZ=99999f;
         lastFrame=System.nanoTime();
@@ -218,6 +227,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 ground=nextGround;objects=nextObjects;shadows=nextShadows;
                 farGround=nextFarGround;farWorld=queuedWorld.far;
                 activeDecoration=queuedWorld.decoration;
+                activeMacieiras=queuedWorld.macieiraPlacements;
                 rockIndex=rockCollision==null?null:rockCollision.index(activeDecoration.rockInstances);
                 baseX=queuedWorld.x;baseZ=queuedWorld.z;
                 worldRadius=Math.round(nextWorldRadius);
@@ -240,7 +250,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                     World.Mesh near=World.ground(cx,cz,radius);
                     World.Decoration decoration=World.decorate(cx,cz,radius);
                     FarWorld distant=FarWorld.build(cx,cz,radius);
-                    completedWorld=new BuildResult(cx,cz,near,decoration,distant);
+                    MacieiraRenderer.Placement[] macieiraPlacements=MacieiraRenderer.generate(cx,cz);
+                    completedWorld=new BuildResult(cx,cz,near,decoration,distant,macieiraPlacements);
                 }
                 catch(Throwable e){Log.e("SolPixel","Terreno async",e);buildingWorld=false;}
             });
@@ -342,7 +353,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             float oldSurface=Float.isNaN(groundedY)?World.height(oldX,oldZ):groundedY;
             float targetX=x+moveVelocityX*dt,targetZ=z+moveVelocityZ*dt;
             collisionPoint[0]=targetX;collisionPoint[1]=targetZ;
-            World.collide(collisionPoint,.48f,activeDecoration); // troncos apenas
+            World.collide(collisionPoint,.48f,activeDecoration); // troncos atuais
+            MacieiraRenderer.collide(collisionPoint,.48f,activeMacieiras);
             float nextX=collisionPoint[0],nextZ=collisionPoint[1];
             float moved=(float)Math.hypot(nextX-oldX,nextZ-oldZ);
             float nextTerrain=World.height(nextX,nextZ);
@@ -467,6 +479,18 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
                 pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
             }
+        }
+        // Macieiras gigantes: 3 formas / 4 LODs (ate 4000m).
+        if(macieiras!=null && activeMacieiras!=null){
+            GLES30.glUseProgram(treeP);
+            GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
+            GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
+            v3(treeP,"uSun",SUN);
+            f1(treeP,"uDrawDistance",FarWorld.HORIZON);
+            f1(treeP,"uEclipse",eclipse);
+            applySwordLight(treeP);
+            bindForestShadow(treeP);
+            macieiras.draw(treeP,activeMacieiras,x,z,forward[0],forward[2]);
         }
         // Cartoes cruzados com alpha cutout: sem transparencia ordenada, sem colisao.
         if(grasses!=null && activeDecoration!=null){

@@ -17,6 +17,7 @@ import java.nio.FloatBuffer;
 /** Le diretamente os GLB 2.0 enviados, preservando PNG e alpha MASK. OpenGL ES 3.0. */
 final class TreeModel {
     private final Primitive[] primitives;
+    private final boolean leafSecond;
     private final int[] textures;
     private final int instanceBuffer;
     private float[] uploadedInstances;
@@ -25,7 +26,9 @@ final class TreeModel {
     private static final class Primitive {
         int vao,vertices,indices,count,material;
     }
-    TreeModel(Context context,String name) throws Exception {
+    TreeModel(Context context,String name) throws Exception {this(context,name,false);}
+    TreeModel(Context context,String name,boolean leafSecond) throws Exception {
+        this.leafSecond=leafSecond;
         byte[] glb;
         try(InputStream stream=context.getAssets().open(name);ByteArrayOutputStream out=new ByteArrayOutputStream()){
             byte[] buf=new byte[32768];int size;
@@ -178,7 +181,8 @@ final class TreeModel {
             GLES30.glVertexAttribDivisor(3,1);GLES30.glVertexAttribDivisor(4,1);
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,textures[p.material]);
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLeaf"),i==0?1f:0f);
+            GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLeaf"),
+                i==(leafSecond?1:0)?1f:0f);
             GLES30.glDrawElementsInstanced(GLES30.GL_TRIANGLES,p.count,GLES30.GL_UNSIGNED_INT,0,count);
         }
         GLES30.glBindVertexArray(0);
