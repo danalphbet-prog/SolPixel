@@ -85,11 +85,13 @@ final class SwordModel {
         GLES30.glDeleteShader(a);GLES30.glDeleteShader(b);
         if(ok[0]==0)throw new IllegalStateException("Sword link: "+GLES30.glGetProgramInfoLog(p));return p;
     }
-    void draw(float[] projection,float glow,float time){
+    void draw(float[] projection,float glow,float time,float swing,float walk){
         GLES30.glUseProgram(program);
         GLES30.glUniformMatrix4fv(GLES30.glGetUniformLocation(program,"uProjection"),1,false,projection,0);
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uGlow"),glow);
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uTime"),time);
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uSwing"),swing);
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uWalk"),walk);
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0);GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,texture);
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"uSwordTexture"),0);
         GLES30.glDisable(GLES30.GL_DEPTH_TEST);

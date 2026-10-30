@@ -85,7 +85,7 @@ final class MacieiraRenderer {
             float scale=8.75f*(.95f+.13f*hash(ix*61+11,iz*67+3));
             float angle=hash(ix*71+19,iz*73-13)*6.2831853f;
             int kind=Math.min(2,(int)(hash(ix*7+101,iz*11-97)*3f));
-            out.add(new Placement(px,height+scale*.54f,pz,scale,angle,kind));
+            out.add(new Placement(px,height+scale*(.54f-.12f*6.57f),pz,scale,angle,kind));
 
             // 9% das formacoes tem apenas uma companheira, menor e com giro diferente.
             if(hash(ix*89-37,iz*97+13)<.09f){
@@ -97,7 +97,7 @@ final class MacieiraRenderer {
                 float secondScale=scale*(.76f+.15f*hash(ix*47+3,iz*17+71));
                 int kind2=(kind+1+(hash(ix*31,iz*43)>.5f?1:0))%3;
                 float rotation2=angle+1.25f+2.4f*hash(ix*17-3,iz*19+17);
-                out.add(new Placement(xx,yy+secondScale*.54f,zz,secondScale,rotation2,kind2));
+                out.add(new Placement(xx,yy+secondScale*(.54f-.12f*6.57f),zz,secondScale,rotation2,kind2));
             }
         }
         return out.toArray(new Placement[0]);

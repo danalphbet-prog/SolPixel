@@ -275,7 +275,7 @@ public final class World {
                 tilt=sign*degrees*.01745329252f;
             }
             float modelHeight=(kind==PINE?53f:13.3f);
-            float groundOffset=2.6f*size-.03f*modelHeight*size;
+            float groundOffset=2.6f*size-.03f*modelHeight*size-.12f*modelHeight*size;
             Tree tree=new Tree(kind,px,py+groundOffset,pz,size,rotation,density,radiusTrunk);
             trees.add(tree);
             // Vagalumes apenas onde EXISTEM arvores/bioma de floresta.
@@ -375,16 +375,16 @@ public final class World {
                 if(!TerrainGeology.rockSupported(xx,zz,7f))continue;
                 float angle=n01(rx*31-19,rz*29+9)*6.2831853f;
                 float kind=n01(rx*23+51,rz*43-79);
-                if(kind<.16f && patch>.28f && steep>.30f){
+                if(kind<.26f && patch>.28f && steep>.30f){
                     // Arco experimental: somente regioes de afloramento e com pilares de apoio.
                     float c=(float)Math.cos(angle),s=(float)Math.sin(angle);
                     for(int i=0;i<9;i++){
-                        float t=i/8f,offset=(t-.5f)*19f;
+                        float t=i/8f,offset=(t-.5f)*26.6f;
                         float px=xx+c*offset,pz=zz+s*offset;
                         float baseY=height(px,pz);
-                        float yy=baseY-.8f+10.0f*(float)Math.sin(Math.PI*t);
-                        float sx=i==0||i==8?4.7f:3.5f;
-                        rock(rocks,px,yy,pz,sx,5.6f,3.2f,angle,i%3);
+                        float yy=baseY-1.12f+14.0f*(float)Math.sin(Math.PI*t);
+                        float sx=i==0||i==8?6.58f:4.90f;
+                        rock(rocks,px,yy,pz,sx,7.84f,4.48f,angle,i%3);
                     }
                 } else if(kind<.81f && steep>.21f){
                     // Pilares mais frequentes; aglomeracoes escalonadas de pedras verticais.

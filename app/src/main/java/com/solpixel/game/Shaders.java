@@ -84,6 +84,35 @@ final class Shaders {
             }
             return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
         }
+        uniform vec4 uSwordOccluders[12];
+        float swordPointShadow(vec3 pos){
+            vec3 ray=pos-uSwordLightPos;
+            float rayLength=length(ray);
+            if(rayLength<.12)return 1.0;
+            vec3 dir=ray/max(rayLength,.001);
+            float visibility=1.0;
+            for(int i=0;i<12;i++){
+                vec4 blocker=uSwordOccluders[i];
+                if(blocker.w<=.05)continue;
+                vec3 center=blocker.xyz-uSwordLightPos;
+                float hit=dot(center,dir);
+                if(hit<.08 || hit>rayLength-.10)continue;
+                float separation=length(center-dir*hit);
+                float pen=1.0-smoothstep(blocker.w*.72,blocker.w*1.20,separation);
+                visibility*=1.0-.86*pen;
+            }
+            return clamp(visibility,.12,1.0);
+        }
+        vec3 swordPointLight(vec3 point,vec3 normal,vec3 albedo){
+            if(uSwordGlow<=.012)return vec3(0.0);
+            vec3 delta=uSwordLightPos-point;
+            float distanceLight=length(delta);
+            if(distanceLight>=5.0)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
+            float shadow=swordPointShadow(point);
+            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+        }
         void main(){
             vec3 n=normalize(vNormal);
             float ndotl=max(0.0,dot(n,normalize(uSun)));
@@ -163,10 +192,8 @@ final class Shaders {
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
-            // Truly local white 5m additive illumination after eclipse darkening.
-            float radius=length(vPos-uSwordLightPos);
-            float attenuation=1.0-smoothstep(0.0,5.0,radius);
-            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
+            // PointLight em tempo real com oclusão das pedras e troncos.
+            color+=swordPointLight(vPos,n,albedo);
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             // 2.5-4 km: fewer color levels plus larger dither blocks.
             float farDetail=smoothstep(2500.0,4000.0,vDist);
@@ -214,6 +241,35 @@ final class Shaders {
         uniform float uDrawDistance,uEclipse,uSwordGlow;
         uniform vec3 uSwordLightPos;
         out vec4 outColor;
+        uniform vec4 uSwordOccluders[12];
+        float swordPointShadow(vec3 pos){
+            vec3 ray=pos-uSwordLightPos;
+            float rayLength=length(ray);
+            if(rayLength<.12)return 1.0;
+            vec3 dir=ray/max(rayLength,.001);
+            float visibility=1.0;
+            for(int i=0;i<12;i++){
+                vec4 blocker=uSwordOccluders[i];
+                if(blocker.w<=.05)continue;
+                vec3 center=blocker.xyz-uSwordLightPos;
+                float hit=dot(center,dir);
+                if(hit<.08 || hit>rayLength-.10)continue;
+                float separation=length(center-dir*hit);
+                float pen=1.0-smoothstep(blocker.w*.72,blocker.w*1.20,separation);
+                visibility*=1.0-.86*pen;
+            }
+            return clamp(visibility,.12,1.0);
+        }
+        vec3 swordPointLight(vec3 point,vec3 normal,vec3 albedo){
+            if(uSwordGlow<=.012)return vec3(0.0);
+            vec3 delta=uSwordLightPos-point;
+            float distanceLight=length(delta);
+            if(distanceLight>=5.0)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
+            float shadow=swordPointShadow(point);
+            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+        }
         void main(){
             vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
             vec3 tex=texture(uRockTex,vLocal.yz).rgb*w.x+
@@ -232,10 +288,8 @@ final class Shaders {
 
             color=mix(color,vec3(.82,.92,1.0),smoothstep(uDrawDistance*.28,uDrawDistance*.9,vDist)*.87);
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
-            // Truly local white 5m additive illumination after eclipse darkening.
-            float radius=length(vWorld-uSwordLightPos);
-            float attenuation=1.0-smoothstep(0.0,5.0,radius);
-            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
+            // PointLight em tempo real com oclusão das pedras e troncos.
+            color+=swordPointLight(vWorld,normalize(vNormal),stone);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -293,11 +347,16 @@ final class Shaders {
             vec2 uv=skyUV(dir);
             vec4 sprite=texture(uStarMap,uv);
             float p=max(sprite.r,max(sprite.g,sprite.b))*sprite.a;
-            float twinkle=.87+.13*sin(uSkyTime*(.63+hash11(floor(uv.x*1024.0))*1.6)+uv.x*583.0);
+            // Cintilações estáveis no céu com apagamentos de alguns segundos.
+            float starId=hash11(floor(uv.x*2048.0)*.73+floor(uv.y*2048.0)*.31);
+            float rate=.55+1.45*hash11(starId*31.7);
+            float twinkle=smoothstep(-.34,.60,sin(uSkyTime*rate+starId*6.28318));
+            vec3 starTint=mix(vec3(1.04,1.04,1.05),vec3(1.22,.52,.48),
+                              step(.83,hash11(starId*87.7)));
             float visibility=uEclipse*smoothstep(-.20,.05,dir.y);
-            sky+=sprite.rgb*(.8+1.8*p)*visibility*twinkle;
+            sky+=sprite.rgb*starTint*(.8+1.8*p)*visibility*twinkle;
             // Brightest catalog stars are clearly visible and lightly haloed.
-            sky+=vec3(1.0,1.04,1.15)*pow(p,7.0)*.65*visibility;
+            sky+=vec3(1.0,1.04,1.15)*pow(p,7.0)*.65*visibility*twinkle;
             sky+=vec3(1.20,1.34,1.59)*meteor(uv)*visibility;
             float sun=dot(dir,normalize(uSun));
             float disc=smoothstep(.99972,.99985,sun);
@@ -314,12 +373,14 @@ final class Shaders {
                 vec4 moon=texture(uMoonTex,moonUV);
                 // Lunar disc obscures the sun, becoming black where solar overlap occurs.
                 float overlap=smoothstep(.9983,.99975,sun);
-                float shaded=clamp(uEclipse*overlap,0.0,1.0);
-                vec3 tint=moon.rgb*mix(1.0,.06,shaded);
+                float coverage=smoothstep(.02,.95,uEclipse);
+                float shaded=clamp(coverage*overlap,0.0,1.0);
+                vec3 tint=moon.rgb*mix(1.0,.008,shaded);
                 float dither=mod(floor(gl_FragCoord.x/3.0)+
                                  2.0*mod(floor(gl_FragCoord.y/3.0),2.0),4.0);
                 tint*=mix(.91,1.02,dither/3.0);
-                sky=mix(sky,tint,moon.a);
+                float moonOpacity=mix(.50,1.0,smoothstep(.04,.93,uEclipse));
+                sky=mix(sky,tint,moon.a*moonOpacity);
             }
             // Only near totality is the solar corona especially bright.
             float ring=exp(-pow((1.0-sun-.00030)*8000.0,2.0));
@@ -336,24 +397,29 @@ final class Shaders {
         layout(location=1) in vec3 aNormal;
         layout(location=2) in vec2 aUv;
         uniform mat4 uProjection;
-        uniform float uGlow,uTime;
+        uniform float uGlow,uTime,uSwing,uWalk;
         out vec2 vUv;
         out vec3 vNormal;
         void main(){
-            // 30% larger; tip leans to screen LEFT, hilt stays at bottom RIGHT.
             float cs=.714,sn=.700;
-            vec3 p=aPos*.91;
-            vec3 sword=vec3(p.x*cs-p.y*sn,p.x*sn+p.y*cs,p.z);
-            sword+=vec3(.65,-.69,-1.70);
-            sword.y+=sin(uTime*1.4)*.004;
-            gl_Position=uProjection*vec4(sword,1.0);
+            vec3 p=aPos*1.18;  // 30% maior que v0.4.1 (0.91)
+            vec3 blade=vec3(p.x*cs-p.y*sn,p.x*sn+p.y*cs,p.z);
+            // Rotação de golpe da direita para esquerda, ao redor do punho.
+            vec2 pivot=vec2(.03,-.10);
+            float swing=-1.10*uSwing;
+            float ca=cos(swing),sa=sin(swing);
+            vec2 off=blade.xy-pivot;
+            blade.xy=vec2(off.x*ca-off.y*sa,off.x*sa+off.y*ca)+pivot;
+            float sway=sin(uTime*3.0)*.018*uWalk+sin(uTime*1.25)*.005;
+            blade+=vec3(1.36+sway,-.82+cos(uTime*2.5)*.012*uWalk,-1.70);
+            gl_Position=uProjection*vec4(blade,1.0);
             vUv=aUv;
             vNormal=normalize(vec3(aNormal.x*cs-aNormal.y*sn,aNormal.x*sn+aNormal.y*cs,aNormal.z));
         }
         """;
     static final String SWORD_F = """
         #version 300 es
-        precision mediump float;
+        precision highp float;
         in vec2 vUv;
         in vec3 vNormal;
         uniform sampler2D uSwordTexture;
@@ -361,10 +427,13 @@ final class Shaders {
         out vec4 outColor;
         void main(){
             vec4 tex=texture(uSwordTexture,vUv);
-            float light=.58+.40*max(0.0,dot(normalize(vNormal),normalize(vec3(-.4,.75,1.0))));
-            // White emission brighter than 1.0 enters the existing bloom pass.
-            vec3 color=tex.rgb*light+vec3(2.65,2.72,2.90)*uGlow;
-            outColor=vec4(color,tex.a);
+            vec3 n=normalize(vNormal);
+            float diffuse=.48+.52*max(0.0,dot(n,normalize(vec3(-.4,.75,1.0))));
+            // Mantém cor e detalhes da textura enquanto o bloom realça a lâmina.
+            float edge=pow(1.0-abs(n.z),2.0);
+            vec3 base=tex.rgb*diffuse;
+            vec3 radiance=base*(1.0+uGlow*1.75)+vec3(.57,.63,.74)*uGlow*(.35+edge*.5);
+            outColor=vec4(radiance,tex.a);
         }
         """;
 
@@ -403,7 +472,7 @@ final class Shaders {
         in vec2 vUv;
         uniform sampler2D uScene,uDepth,uBloom;
         uniform vec2 uTexel,uSunUv,uSwordTipUv;
-        uniform float uSwordRays;
+        uniform float uSwordRays,uSwordSwing;
         uniform float uSunVisible;
         uniform float uForestNear,uEclipse;
         out vec4 outColor;
@@ -464,13 +533,33 @@ final class Shaders {
                 color+=vec3(1.0,.79,.55)*uSunVisible*(1.0-uSwordRays)*
                        mix(1.0,.70,uEclipse)*(sunGate*(halo+spikes+shafts)+forestShafts);
             }
-            // Redirect rays to the tip of the drawn GLB sword when aiming at eclipse.
-            vec2 fromTip=vUv-uSwordTipUv;
-            float tipDist=length(fromTip);
-            float tipAngle=atan(fromTip.y,fromTip.x);
-            float spike=pow(abs(cos(tipAngle*11.0)),15.0)*exp(-tipDist*3.6);
-            float whiteHalo=exp(-tipDist*14.0)*1.9+exp(-tipDist*42.0)*2.2;
-            color+=vec3(1.65,1.75,1.95)*uSwordRays*(spike*.85+whiteHalo);
+            // Feixes solares de verdade convergem do SOL até a ESPADA,
+            // não criam um círculo branco/emissivo ou PNG radial na arma.
+            if(uSwordRays>.001 && uSunVisible>.001){
+                vec2 beamVector=uSwordTipUv-uSunUv;
+                float beamLen=dot(beamVector,beamVector);
+                float along=clamp(dot(vUv-uSunUv,beamVector)/max(beamLen,.0001),0.0,1.0);
+                vec2 beamPoint=uSunUv+beamVector*along;
+                float transverse=length(vUv-beamPoint);
+                float width=mix(.032,.004,along);
+                float shape=exp(-pow(transverse/max(width,.0007),2.0));
+                float taper=smoothstep(.0,.09,along)*(1.0-smoothstep(.95,1.02,along));
+                float sourceOpen=(skyOpen(uSunUv)+skyOpen(mix(uSunUv,uSwordTipUv,.28)))*.5;
+                float shaft=shape*taper*uSwordRays*uSunVisible*(.36+.64*sourceOpen);
+                color+=vec3(1.34,1.18,1.08)*shaft;
+            }
+            // Rastro branco temporário da lâmina ao executar o golpe.
+            if(uSwordSwing>.005){
+                vec2 pivot=vec2(.86,.08);
+                vec2 a=vUv-pivot;
+                vec2 b=uSwordTipUv-pivot;
+                float radial=length(a);
+                float r=length(b);
+                float angleA=atan(a.y,a.x),angleB=atan(b.y,b.x);
+                float sep=abs(atan(sin(angleA-angleB),cos(angleA-angleB)));
+                float ribbon=exp(-pow((radial-r)/.013,2.0))*(1.0-smoothstep(.03,1.04,sep));
+                color+=vec3(1.26,1.32,1.42)*ribbon*uSwordSwing*.73;
+            }
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));
             // The night remains dark; the local white illumination is added per material.
@@ -590,6 +679,7 @@ final class Shaders {
         uniform vec3 uEye;
         out vec4 vLightCoord;
         uniform vec3 uSun;
+        uniform float uWindTime,uLeaf;
         out vec2 vUv;
         out vec3 vNormal;
         out float vForest;
@@ -604,6 +694,14 @@ final class Shaders {
             vec3 rotated=vec3(tilted.x*aRotation.x-tilted.z*aRotation.y,
                               tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
             vec3 world=aLocation.xyz+rotated;
+            float leafDistance=distance(aLocation.xz,uEye.xz);
+            if(uLeaf>.5 && leafDistance<15.0){
+                float fade=1.0-smoothstep(9.0,15.0,leafDistance);
+                float tip=smoothstep(.4,3.5,aPosition.y);
+                float wave=uWindTime*1.37+aLocation.x*.17+aLocation.z*.24;
+                world.x+=sin(wave+aPosition.y*.27)*.088*tip*fade;
+                world.z+=cos(wave*.77+aPosition.x*.30)*.064*tip*fade;
+            }
             vLightCoord=uLightVP*vec4(world,1.0);
             vec3 n=vec3(aNormal.x,aNormal.y*cs-aNormal.z*sn,
                         aNormal.y*sn+aNormal.z*cs);
@@ -644,6 +742,35 @@ final class Shaders {
             }
             return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
         }
+        uniform vec4 uSwordOccluders[12];
+        float swordPointShadow(vec3 pos){
+            vec3 ray=pos-uSwordLightPos;
+            float rayLength=length(ray);
+            if(rayLength<.12)return 1.0;
+            vec3 dir=ray/max(rayLength,.001);
+            float visibility=1.0;
+            for(int i=0;i<12;i++){
+                vec4 blocker=uSwordOccluders[i];
+                if(blocker.w<=.05)continue;
+                vec3 center=blocker.xyz-uSwordLightPos;
+                float hit=dot(center,dir);
+                if(hit<.08 || hit>rayLength-.10)continue;
+                float separation=length(center-dir*hit);
+                float pen=1.0-smoothstep(blocker.w*.72,blocker.w*1.20,separation);
+                visibility*=1.0-.86*pen;
+            }
+            return clamp(visibility,.12,1.0);
+        }
+        vec3 swordPointLight(vec3 point,vec3 normal,vec3 albedo){
+            if(uSwordGlow<=.012)return vec3(0.0);
+            vec3 delta=uSwordLightPos-point;
+            float distanceLight=length(delta);
+            if(distanceLight>=5.0)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
+            float shadow=swordPointShadow(point);
+            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+        }
         void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
@@ -658,10 +785,8 @@ final class Shaders {
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
 
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
-            // Truly local white 5m additive illumination after eclipse darkening.
-            float radius=length(vWorld-uSwordLightPos);
-            float attenuation=1.0-smoothstep(0.0,5.0,radius);
-            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
+            // PointLight em tempo real com oclusão das pedras e troncos.
+            color+=swordPointLight(vWorld,normalize(vNormal),tex.rgb);
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
@@ -725,6 +850,35 @@ final class Shaders {
         uniform float uGrassLimit,uEclipse,uSwordGlow;
         uniform vec3 uSwordLightPos;
         out vec4 outColor;
+        uniform vec4 uSwordOccluders[12];
+        float swordPointShadow(vec3 pos){
+            vec3 ray=pos-uSwordLightPos;
+            float rayLength=length(ray);
+            if(rayLength<.12)return 1.0;
+            vec3 dir=ray/max(rayLength,.001);
+            float visibility=1.0;
+            for(int i=0;i<12;i++){
+                vec4 blocker=uSwordOccluders[i];
+                if(blocker.w<=.05)continue;
+                vec3 center=blocker.xyz-uSwordLightPos;
+                float hit=dot(center,dir);
+                if(hit<.08 || hit>rayLength-.10)continue;
+                float separation=length(center-dir*hit);
+                float pen=1.0-smoothstep(blocker.w*.72,blocker.w*1.20,separation);
+                visibility*=1.0-.86*pen;
+            }
+            return clamp(visibility,.12,1.0);
+        }
+        vec3 swordPointLight(vec3 point,vec3 normal,vec3 albedo){
+            if(uSwordGlow<=.012)return vec3(0.0);
+            vec3 delta=uSwordLightPos-point;
+            float distanceLight=length(delta);
+            if(distanceLight>=5.0)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
+            float shadow=swordPointShadow(point);
+            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+        }
         void main(){
             vec4 tex=texture(uGrassAtlas,vUv);
             if(tex.a<.46)discard;
@@ -743,10 +897,8 @@ final class Shaders {
             color*=mix(.83,1.15,clamp(vShade,0.0,1.0));
 
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
-            // Truly local white 5m additive illumination after eclipse darkening.
-            float radius=length(vWorld-uSwordLightPos);
-            float attenuation=1.0-smoothstep(0.0,5.0,radius);
-            color+=vec3(2.0,2.20,2.45)*uSwordGlow*attenuation;
+            // PointLight em tempo real com oclusão das pedras e troncos.
+            color+=swordPointLight(vWorld,vec3(0.0,1.0,0.0),tex.rgb);
             outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;

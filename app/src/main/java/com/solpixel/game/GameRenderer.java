@@ -41,7 +41,17 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private volatile boolean swordButtonHeld=false;
     private boolean swordPressConsumed=false;
     private float swordGlow=0f, swordGlowRemaining=0f;
+    private float swordSwing=0f,swordSwingPhase=0f;
+    private float swordMoonContact=0f;
+    private float moonShadowProgress=0f;
+    private float moonVisualAlpha=.5f;
+    private float starsTwinkleTime=0f;
     private float swordRays=0f;
+    private float swordSwingTime=-1f;
+    private final float[] swordShadowSpheres=new float[48];
+    private final float[] swordShadowDistances=new float[12];
+    private int swordShadowFrame=0;
+    private float solasSwordSway=0f;
     private final float[] swordTipUv={.45f,.60f};
 // SOLAS_V041_ECLIPSE_STARS_SWORD
     private final float[] swordLightPosition=new float[3];
@@ -108,7 +118,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
 
     void move(float vx,float vy){stickX=vx;stickY=vy;}
     void jump(){jumpPressed=true;}
-    void swordAction(boolean active){swordButtonHeld=active;}
+    void swordAction(boolean active){
+        if(active && !swordButtonHeld && game.selectedSlot==0)swordSwingTime=0f;
+        swordButtonHeld=active;
+    }
     // Necessario para os icones GameHud da v0.4.1.
     boolean swordActive(){return swordGlowRemaining>0f && game.selectedSlot==0;}
     void reset(){resetRequested=true;}
@@ -183,20 +196,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         bloomB=Target.make(Math.max(8,sceneW/4),Math.max(8,sceneH/4),false);
         // Nuvens alem de 1 km: aumentar clipping sem aumentar o raio do terreno.
         Matrix.perspectiveM(proj,0,67f,sceneW/(float)sceneH,.12f,4300f);
-        // Calculate view-space weapon tip using the same transform as SWORD_V.
-        float cs=.714f,sn=.700f, tipY=1.225f*.91f;
-        float[] tip={.65f-sn*tipY,-.69f+cs*tipY,-1.70f,1f};
-        float[] clip=new float[4]; Matrix.multiplyMV(clip,0,proj,0,tip,0);
-        if(clip[3]>.001f){
-            swordTipUv[0]=Math.max(.02f,Math.min(.98f,clip[0]/clip[3]*.5f+.5f));
-            swordTipUv[1]=Math.max(.02f,Math.min(.98f,clip[1]/clip[3]*.5f+.5f));
-        }
+        updateSwordTip();
     }
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
+        if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.46f)swordSwingTime=-1f;}
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
         CelestialCycle.sunDirection(celestialTime,SUN);
         eclipse=CelestialCycle.eclipse(celestialTime);
@@ -286,9 +293,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         right[0]=cosY;right[1]=0;right[2]=sinY;
         up[0]=-sinY*sinP;up[1]=cosP;up[2]=cosY*sinP;
         // White point light follows the real world-space projection of the blade tip.
-        swordLightPosition[0]=x+forward[0]*1.6f-right[0]*.20f+up[0]*.18f;
-        swordLightPosition[1]=eyeY+forward[1]*1.6f+up[1]*.18f;
-        swordLightPosition[2]=z+forward[2]*1.6f-right[2]*.20f+up[2]*.18f;
+        swordLightPosition[0]=x+forward[0]*1.65f+right[0]*.23f+up[0]*.18f;
+        swordLightPosition[1]=eyeY+forward[1]*1.65f+up[1]*.18f;
+        swordLightPosition[2]=z+forward[2]*1.65f+right[2]*.23f+up[2]*.18f;
+        if((++swordShadowFrame & 3)==0 && swordGlow>.025f)updateSwordShadowOccluders();
         Matrix.setLookAtM(view,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
         Matrix.multiplyMM(vp,0,proj,0,view,0);
         if(forestShadows!=null && activeDecoration!=null){
@@ -316,7 +324,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             moveVelocityX=moveVelocityZ=lookRemainingX=lookRemainingY=0;
             smoothedEyeY=Float.NaN;
             groundedY=World.height(x,z);
-            swordGlowRemaining=0f;swordGlow=0f;swordRays=0f;
+            swordGlowRemaining=0f;swordGlow=0f;swordRays=0f;swordSwingTime=-1f;
             swordPressConsumed=false;swordButtonHeld=false;
             consumeLook();
         }
@@ -362,6 +370,16 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             boolean rockWall=false;
             if(rockCollision!=null && rockIndex!=null && airHeight<.55f){
                 rockWall=rockCollision.blocked(nextX,nextZ,oldSurface,rockIndex);
+                if(rockWall){
+                    // Resolve colisão no contorno real da pedra, com deslizamento nos eixos.
+                    if(!rockCollision.blocked(nextX,oldZ,oldSurface,rockIndex)){
+                        nextZ=oldZ;rockWall=false;
+                    }else if(!rockCollision.blocked(oldX,nextZ,oldSurface,rockIndex)){
+                        nextX=oldX;rockWall=false;
+                    }
+                    nextTerrain=World.height(nextX,nextZ);
+                    nextSurface=nextTerrain;
+                }
                 if(!rockWall)
                     nextSurface=Math.max(nextSurface,rockCollision.surfaceAt(nextX,nextZ,nextTerrain,
                                        oldSurface+.58f,rockIndex));
@@ -463,6 +481,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // Duas especies GLB, geometria compartilhada; instancing evita centenas de draws.
         if(activeDecoration!=null && broadleaf!=null && pines!=null){
             GLES30.glUseProgram(treeP);
+            f1(treeP,"uWindTime",time);
             GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
@@ -483,6 +502,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // Macieiras gigantes: 3 formas / 4 LODs (ate 4000m).
         if(macieiras!=null && activeMacieiras!=null){
             GLES30.glUseProgram(treeP);
+            f1(treeP,"uWindTime",time);
             GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
@@ -521,7 +541,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         }
         if(sword!=null && game.state==1 && game.selectedSlot==0){
             // HUD 3D de arma renderizado por ultimo, nao sofre oclusao pelo relevo.
-            sword.draw(proj,swordGlow,time);
+            sword.draw(proj,swordGlow,time,attackProgress(),
+                       Math.min(1f,(float)Math.hypot(moveVelocityX,moveVelocityZ)/7f));
         }
         // Poeira iluminada flutuante, sprites de ponto com textura radial.
         GLES30.glUseProgram(dustP);
@@ -586,7 +607,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         }
         f1(finalP,"uSunVisible",solar);
         f1(finalP,"uEclipse",eclipse);
+        updateSwordTip();
         GLES30.glUniform2f(loc(finalP,"uSwordTipUv"),swordTipUv[0],swordTipUv[1]);
+        f1(finalP,"uSwordSwing",attackProgress());
         f1(finalP,"uSwordRays",swordRays);
         f1(finalP,"uForestNear",forestShadows!=null && forestShadows.ready()?forestNear:0f);
         fullTriangle();
@@ -620,10 +643,77 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             return id[0];
         }catch(Exception ex){Log.w("SolPixel","Textura indisponivel: "+filename,ex);return 0;}
     }
-    /** Fonte de luz aproximadamente pontual, raio 5 m, sem cubemap de sombra. */
+    private float attackProgress(){
+        if(swordSwingTime<0f)return 0f;
+        float t=Math.max(0f,Math.min(1f,swordSwingTime/.46f));
+        return (float)Math.sin(Math.PI*t);
+    }
+    private void updateSwordTip(){
+        // As coordenadas aqui correspondem exatamente à transformação em SWORD_V.
+        float s=1.225f*1.18f;
+        float px=-.700f*s,py=.714f*s;
+        float swing=-1.10f*attackProgress();
+        float cs=(float)Math.cos(swing),sn=(float)Math.sin(swing);
+        float tx=px-.03f,ty=py+.10f;
+        float xScreen=cs*tx-sn*ty+.03f+1.36f;
+        float yScreen=sn*tx+cs*ty-.10f-.82f;
+        float[] tip={xScreen,yScreen,-1.70f,1f};
+        float[] clip=new float[4];
+        Matrix.multiplyMV(clip,0,proj,0,tip,0);
+        if(clip[3]>.001f){
+            swordTipUv[0]=Math.max(-.3f,Math.min(1.3f,clip[0]/clip[3]*.5f+.5f));
+            swordTipUv[1]=Math.max(-.3f,Math.min(1.3f,clip[1]/clip[3]*.5f+.5f));
+        }
+    }
+    private void insertSwordOccluder(float cx,float cy,float cz,float radius){
+        if(radius<.10f)return;
+        float dx=cx-swordLightPosition[0],dy=cy-swordLightPosition[1],dz=cz-swordLightPosition[2];
+        float dist2=dx*dx+dy*dy+dz*dz;
+        if(dist2>85f)return;  // distância além do alcance dos 5 m.
+        int worst=0;
+        for(int i=1;i<12;i++)if(swordShadowDistances[i]>swordShadowDistances[worst])worst=i;
+        if(dist2>=swordShadowDistances[worst])return;
+        swordShadowDistances[worst]=dist2;
+        int n=worst*4;
+        swordShadowSpheres[n]=cx;swordShadowSpheres[n+1]=cy;
+        swordShadowSpheres[n+2]=cz;swordShadowSpheres[n+3]=radius;
+    }
+    private void updateSwordShadowOccluders(){
+        java.util.Arrays.fill(swordShadowSpheres,0f);
+        java.util.Arrays.fill(swordShadowDistances,Float.POSITIVE_INFINITY);
+        if(activeDecoration!=null && activeDecoration.trees!=null){
+            for(World.Tree tree:activeDecoration.trees){
+                float dx=tree.x-swordLightPosition[0],dz=tree.z-swordLightPosition[2];
+                if(dx*dx+dz*dz>64f)continue;
+                float trunkHeight=tree.kind==World.PINE?3.4f:2.2f;
+                float centerY=World.height(tree.x,tree.z)+trunkHeight*.5f;
+                insertSwordOccluder(tree.x,centerY,tree.z,
+                    Math.max(.35f,Math.min(1.75f,tree.radius*.75f)));
+            }
+        }
+        if(activeMacieiras!=null){
+            for(MacieiraRenderer.Placement tree:activeMacieiras){
+                float dx=tree.x-swordLightPosition[0],dz=tree.z-swordLightPosition[2];
+                if(dx*dx+dz*dz>64f)continue;
+                insertSwordOccluder(tree.x,World.height(tree.x,tree.z)+2.1f,tree.z,2.1f);
+            }
+        }
+        if(activeDecoration!=null && activeDecoration.rockInstances!=null){
+            float[] r=activeDecoration.rockInstances;
+            for(int i=0;i+8<r.length;i+=9){
+                float dx=r[i]-swordLightPosition[0],dz=r[i+2]-swordLightPosition[2];
+                if(dx*dx+dz*dz>64f)continue;
+                float rad=Math.max(.30f,Math.min(3.4f,Math.min(r[i+3],r[i+5])*.55f));
+                insertSwordOccluder(r[i],r[i+1]+Math.min(1.8f,r[i+4]*.30f),r[i+2],rad);
+            }
+        }
+    }
+    /** Point light esférica, por fragmento, acompanhada de oclusão em tempo real. */
     private void applySwordLight(int p){
         f1(p,"uSwordGlow",swordGlow);
         GLES30.glUniform3fv(loc(p,"uSwordLightPos"),1,swordLightPosition,0);
+        int occlusion=loc(p,"uSwordOccluders[0]");
+        if(occlusion>=0)GLES30.glUniform4fv(occlusion,12,swordShadowSpheres,0);
     }
     private void bindForestShadow(int program){
         boolean available=forestShadows!=null && forestShadows.ready();
