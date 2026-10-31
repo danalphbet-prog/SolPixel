@@ -122,7 +122,20 @@ final class Shaders {
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
         }
-        void main(){
+
+        float solasCloudHash(vec2 p){
+            p=fract(p*vec2(123.34,456.21));
+            p+=dot(p,p+45.32);
+            return fract(p.x*p.y);
+        }
+        float cloudShadowMask(vec2 wp){
+            vec2 q=floor((wp*0.0105 + vec2(.17,-.11))*26.0)/26.0;
+            float n=solasCloudHash(floor(q*41.0));
+            float n2=solasCloudHash(floor(q*17.0)+13.7);
+            float c=smoothstep(.56,.86,n*.7+n2*.3);
+            return mix(1.0,0.82,c);
+        }
+\n        void main(){
             vec3 n=normalize(vNormal);
             float ndotl=max(0.0,dot(n,normalize(uSun)));
             vec3 ambient=mix(vec3(.19,.17,.15),vec3(.40,.48,.57),
@@ -210,7 +223,8 @@ final class Shaders {
             float farBayer=mod(floor(gl_FragCoord.x/mix(1.0,4.0,farDetail))+
                 2.0*mod(floor(gl_FragCoord.y/mix(1.0,4.0,farDetail)),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*farSteps+mix(bayer,farBayer,farDetail)*.65)/farSteps;
-            outColor=vec4(color,1.0);
+            color *= cloudShadowMask(vPos.xz);
+            
         }
         """;
     // Solas Rocks v1 - Pedras GLB: tri-planar real usando a textura fornecida, iluminacao e LOD instanciado.
@@ -279,7 +293,20 @@ final class Shaders {
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
         }
-        void main(){
+
+        float solasCloudHash(vec2 p){
+            p=fract(p*vec2(123.34,456.21));
+            p+=dot(p,p+45.32);
+            return fract(p.x*p.y);
+        }
+        float cloudShadowMask(vec2 wp){
+            vec2 q=floor((wp*0.0105 + vec2(.17,-.11))*26.0)/26.0;
+            float n=solasCloudHash(floor(q*41.0));
+            float n2=solasCloudHash(floor(q*17.0)+13.7);
+            float c=smoothstep(.56,.86,n*.7+n2*.3);
+            return mix(1.0,0.82,c);
+        }
+\n        void main(){
             vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
             vec3 tex=texture(uRockTex,vLocal.yz).rgb*w.x+
                      texture(uRockTex,vLocal.xz).rgb*w.y+
@@ -301,7 +328,8 @@ final class Shaders {
             color+=swordPointLight(vWorld,normalize(vNormal),stone);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
-            outColor=vec4(color,1.0);
+            color *= cloudShadowMask(vWorld.xz);
+            
         }
         """;
 
@@ -781,7 +809,20 @@ final class Shaders {
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
         }
-        void main(){
+
+        float solasCloudHash(vec2 p){
+            p=fract(p*vec2(123.34,456.21));
+            p+=dot(p,p+45.32);
+            return fract(p.x*p.y);
+        }
+        float cloudShadowMask(vec2 wp){
+            vec2 q=floor((wp*0.0105 + vec2(.17,-.11))*26.0)/26.0;
+            float n=solasCloudHash(floor(q*41.0));
+            float n2=solasCloudHash(floor(q*17.0)+13.7);
+            float c=smoothstep(.56,.86,n*.7+n2*.3);
+            return mix(1.0,0.82,c);
+        }
+\n        void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
             float nl=vGouraud;
@@ -802,7 +843,8 @@ final class Shaders {
             color=mix(color,vec3(.82,.92,1.0),fog);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
-            outColor=vec4(color,1.0);
+            color *= cloudShadowMask(vWorld.xz);
+            
         }
         """;
 
@@ -948,50 +990,48 @@ final class Shaders {
             return (b[p.x+4*p.y]+.5)/16.0;
         }
         void main(){
-            // Dithering mais fino: pontos menores, 1:1 ao pixel.
-            float dither=bayer4(gl_FragCoord.xy);
-
             vec3 n=normalize(vNormal);
             vec3 sun=normalize(uSun);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
-            vec2 uvPixel=floor(uv*96.0)/96.0;
-            float mask=texture(uCloudMask,uvPixel*.85).r;
+            vec2 uvPixel=floor(uv*72.0)/72.0;
+            float mask=texture(uCloudMask,uvPixel*.82).r;
 
-            // Lado do sol e topo = mais claros. Parte oposta, de baixo e base = mais escuros.
-            float lit=max(0.0,dot(n,sun));
+            // Corrigido: faces voltadas ao sol e o topo ficam mais claros.
+            float sunFacing=max(0.0,dot(n,sun));
             float opposite=max(0.0,-dot(n,sun));
             float top=max(0.0,n.y);
-            float underside=max(0.0,-n.y);
-            float baseShade=smoothstep(-24.0,8.0,-vElevation);
+            float bottom=max(0.0,-n.y);
+            float baseShade=smoothstep(-22.0,6.0,-vElevation);
+            float exposure=0.20 + sunFacing*0.54 + top*0.30;
+            exposure -= opposite*0.28 + bottom*0.34 + baseShade*0.14;
+            exposure += (mask-.5)*0.03;
 
-            float exposure=0.16 + lit*0.56 + top*0.34;
-            exposure -= opposite*0.24 + underside*0.42 + baseShade*0.12;
-            exposure += (mask-.5)*0.035;
-
-            vec3 dayShadow=vec3(.56,.63,.74);
-            vec3 dayMid=vec3(.86,.91,.97);
+            vec3 dayShadow=vec3(.60,.67,.77);
+            vec3 dayMid=vec3(.86,.92,.98);
             vec3 dayLight=vec3(1.0,1.0,1.0);
-            vec3 nightShadow=vec3(.10,.13,.18);
-            vec3 nightMid=vec3(.28,.34,.44);
-            vec3 nightLight=vec3(.52,.58,.68);
+            vec3 nightShadow=vec3(.12,.16,.22);
+            vec3 nightMid=vec3(.34,.40,.50);
+            vec3 nightLight=vec3(.56,.62,.70);
             float night=smoothstep(.10,.98,uEclipse);
             vec3 shadow=mix(dayShadow,nightShadow,night);
             vec3 mid=mix(dayMid,nightMid,night);
             vec3 light=mix(dayLight,nightLight,night);
 
-            // ColorRamp constante: 3 tons.
-            float midStep=step(.34,exposure);
-            float lightStep=step(.73,exposure);
+            float midStep=step(.36,exposure);
+            float lightStep=step(.72,exposure);
             vec3 color=mix(shadow,mid,midStep);
             color=mix(color,light,lightStep);
 
-            // Sem aspecto oco: alpha cheia. Fading so muito perto do player e bem longe.
-            float nearFade=smoothstep(22.0,44.0,vCloudDistance);
-            float farFade=1.0-smoothstep(3150.0,3650.0,vCloudDistance);
-            float visibility=clamp(uAlpha,0.0,1.0)*nearFade*farFade;
-            if(visibility<0.02) discard;
-            if(dither>visibility) discard;
-
+            // Dithering apenas na borda/fade das nuvens, nao no preenchimento inteiro.
+            float visible=clamp(uAlpha,0.0,1.0);
+            float nearFade=smoothstep(18.0,34.0,vCloudDistance);
+            float farFade=1.0-smoothstep(3300.0,3700.0,vCloudDistance);
+            float visibility=visible*nearFade*farFade;
+            if(visibility<0.03) discard;
+            if(visibility<0.985){
+                float d=bayer4(gl_FragCoord.xy*0.5);
+                if(d>visibility) discard;
+            }
             outColor=vec4(color,1.0);
         }
         """;

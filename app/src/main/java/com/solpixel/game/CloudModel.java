@@ -11,7 +11,7 @@ import java.nio.ByteOrder;
 
 /** Nuvens lowpoly: 6 modelos GLB (padrao, pequena, larga, alta, stratus e cumulonimbus). */
 final class CloudModel {
-    private static final String[] NAMES={"nuvem_padrao.glb","nuvem_pequena.glb","nuvem_larga.glb","nuvem_alta.glb","nuvem_stratus.glb","nuvem_cumulonimbus.glb"};
+    private static final String[] NAMES={"nuvem_padrao.glb","nuvem_pequena.glb","nuvem_larga.glb","nuvem_alta.glb","nuvem_cumulonimbus.glb"};
     private final Mesh[] meshes=new Mesh[NAMES.length];
     private static final class Mesh {int vao,vbo,ibo,count; float cx,cy,cz;}
     CloudModel(Context context) throws Exception {
