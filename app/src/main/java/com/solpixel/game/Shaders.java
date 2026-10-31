@@ -135,7 +135,8 @@ final class Shaders {
             float c=smoothstep(.56,.86,n*.7+n2*.3);
             return mix(1.0,0.82,c);
         }
-\n        void main(){
+
+        void main(){
             vec3 n=normalize(vNormal);
             float ndotl=max(0.0,dot(n,normalize(uSun)));
             vec3 ambient=mix(vec3(.19,.17,.15),vec3(.40,.48,.57),
@@ -306,7 +307,8 @@ final class Shaders {
             float c=smoothstep(.56,.86,n*.7+n2*.3);
             return mix(1.0,0.82,c);
         }
-\n        void main(){
+
+        void main(){
             vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
             vec3 tex=texture(uRockTex,vLocal.yz).rgb*w.x+
                      texture(uRockTex,vLocal.xz).rgb*w.y+
@@ -822,7 +824,8 @@ final class Shaders {
             float c=smoothstep(.56,.86,n*.7+n2*.3);
             return mix(1.0,0.82,c);
         }
-\n        void main(){
+
+        void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
             float nl=vGouraud;
