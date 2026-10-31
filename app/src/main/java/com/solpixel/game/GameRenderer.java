@@ -541,16 +541,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(clouds!=null && cloudVisibility>.006f){
             GLES30.glUseProgram(cloudP);
-            // Ortografica so no plano da tela; projecao de profundidade continua
-            // perspectiva para evitar que nuvens aparecam na frente de montanhas.
-            float aspect=sceneW/(float)Math.max(1,sceneH);
-            float cloudHalfH=650f,cloudHalfW=cloudHalfH*aspect;
-            float[] cloudOrthoProj=new float[16],cloudOrthoVp=new float[16];
-            Matrix.orthoM(cloudOrthoProj,0,-cloudHalfW,cloudHalfW,
-                          -cloudHalfH,cloudHalfH,.12f,4300f);
-            Matrix.multiplyMM(cloudOrthoVp,0,cloudOrthoProj,0,view,0);
+            // Projecao perspectiva 3D: a mesma usada pelo mundo.
             GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
-            GLES30.glUniformMatrix4fv(loc(cloudP,"uCloudOrthoVp"),1,false,cloudOrthoVp,0);
             v3(cloudP,"uSun",SUN);
             f1(cloudP,"uEclipse",eclipse);
             GLES30.glUniform3f(loc(cloudP,"uEye"),x,eyeY,z);

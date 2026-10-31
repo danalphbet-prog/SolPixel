@@ -919,7 +919,6 @@ final class Shaders {
         layout(location=0) in vec3 aPos;
         layout(location=1) in vec3 aNormal;
         uniform mat4 uMvp;
-        uniform mat4 uCloudOrthoVp;
         uniform vec4 uCloudPosScale;
         uniform vec3 uCloudCenter,uEye;
         out vec3 vLocal,vNormal;
@@ -929,11 +928,7 @@ final class Shaders {
             vLocal=aPos;vNormal=aNormal;
             vElevation=pos.y;
             vCloudDistance=distance(pos,uEye);
-            // X/Y ortograficos; profundidade continua perspectiva para oclusao correta.
-            vec4 perspectiveClip=uMvp*vec4(pos,1.0);
-            vec4 orthoClip=uCloudOrthoVp*vec4(pos,1.0);
-            perspectiveClip.xy=orthoClip.xy*perspectiveClip.w;
-            gl_Position=perspectiveClip;
+            gl_Position=uMvp*vec4(pos,1.0);
         }
         """;
     // SOLAS_V053_TOON_CLOUDS_3_TONES
