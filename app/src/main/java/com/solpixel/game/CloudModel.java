@@ -15,7 +15,18 @@ final class CloudModel {
     private final Mesh[] meshes=new Mesh[NAMES.length];
     private static final class Mesh {int vao,vbo,ibo,count; float cx,cy,cz;}
     CloudModel(Context context) throws Exception {
-        for(int k=0;k<NAMES.length;k++) meshes[k]=readGlb(context,NAMES[k]);
+        // Uma nuvem invalida nao deve apagar o ceu inteiro.
+        int loaded=0;
+        for(int k=0;k<NAMES.length;k++){
+            try {
+                meshes[k]=readGlb(context,NAMES[k]);
+                loaded++;
+                android.util.Log.i("SolasCloud","GLB carregado: "+NAMES[k]);
+            } catch(Exception e) {
+                android.util.Log.e("SolasCloud","Falha no GLB: "+NAMES[k],e);
+            }
+        }
+        if(loaded==0)throw new IllegalStateException("Nenhum GLB de nuvem valido");
     }
     private static Mesh readGlb(Context context,String name) throws Exception {
         byte[] data;
@@ -127,6 +138,7 @@ final class CloudModel {
                 if(opacity<=.014f)continue;
                 int type=Math.min(NAMES.length-1,(int)(hash(gx*17,gz*31)*NAMES.length));
                 Mesh mesh=meshes[type];
+                if(mesh==null){for(Mesh available:meshes)if(available!=null){mesh=available;break;}}
                 float scale=96f+hash(gx*29,gz*17)*48f;
                 float height=cloudHeight(gx,gz);
                 drawOne(mesh,pos,center,alpha,px,height,pz,scale,opacity);
@@ -180,6 +192,7 @@ final class CloudModel {
         return t*t*(3f-2f*t);
     }
     private static void drawOne(Mesh mesh,int loc,int center,int alpha,float px,float py,float pz,float scale,float opacity){
+        if(mesh==null)return;
         GLES30.glUniform4f(loc,px,py,pz,scale);
         GLES30.glUniform3f(center,mesh.cx,mesh.cy,mesh.cz);
         GLES30.glUniform1f(alpha,opacity);
