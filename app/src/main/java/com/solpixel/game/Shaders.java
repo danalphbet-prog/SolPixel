@@ -942,49 +942,57 @@ final class Shaders {
         uniform vec3 uSun;
         uniform float uAlpha,uEclipse;
         out vec4 outColor;
-        float bayer(vec2 pixel){
+        float bayer4(vec2 pixel){
             const float b[16]=float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
             ivec2 p=ivec2(mod(floor(pixel),4.0));
             return (b[p.x+4*p.y]+.5)/16.0;
         }
         void main(){
-            vec2 pixel=floor(gl_FragCoord.xy/2.0);
-            float dither=bayer(pixel);
-            float visibility=clamp(uAlpha/.90,0.0,1.0);
-            float coverage=visibility*visibility*(3.0-2.0*visibility);
-            float farDither=smoothstep(1400.0,3700.0,vCloudDistance);
-            if(dither>coverage*mix(1.0,.78,farDither))discard;
+            // Dithering mais fino: pontos menores, 1:1 ao pixel.
+            float dither=bayer4(gl_FragCoord.xy);
 
             vec3 n=normalize(vNormal);
             vec3 sun=normalize(uSun);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
-            vec2 uvPixel=floor(uv*64.0)/64.0;
-            float mask=texture(uCloudMask,uvPixel*.95).r;
+            vec2 uvPixel=floor(uv*96.0)/96.0;
+            float mask=texture(uCloudMask,uvPixel*.85).r;
 
-            float direct=dot(n,sun);
-            float opposite=max(0.0,-direct);
+            // Lado do sol e topo = mais claros. Parte oposta, de baixo e base = mais escuros.
+            float lit=max(0.0,dot(n,sun));
+            float opposite=max(0.0,-dot(n,sun));
+            float top=max(0.0,n.y);
             float underside=max(0.0,-n.y);
-            float sideShade=(1.0-max(0.0,direct))*0.22;
-            float exposure=.30 + max(0.0,direct)*.62 + max(0.0,n.y)*.08;
-            exposure -= opposite*.34 + underside*.28 + sideShade;
-            exposure += (mask-.5)*.05 + (dither-.5)*.03;
+            float baseShade=smoothstep(-24.0,8.0,-vElevation);
 
-            vec3 dayShadow=vec3(.31,.40,.53);
-            vec3 dayMid=vec3(.73,.84,.95);
-            vec3 dayLight=vec3(.99,.99,.95);
-            vec3 nightShadow=vec3(.055,.075,.12);
-            vec3 nightMid=vec3(.18,.24,.36);
-            vec3 nightLight=vec3(.33,.40,.52);
-            float night=smoothstep(.08,.96,uEclipse);
+            float exposure=0.16 + lit*0.56 + top*0.34;
+            exposure -= opposite*0.24 + underside*0.42 + baseShade*0.12;
+            exposure += (mask-.5)*0.035;
+
+            vec3 dayShadow=vec3(.56,.63,.74);
+            vec3 dayMid=vec3(.86,.91,.97);
+            vec3 dayLight=vec3(1.0,1.0,1.0);
+            vec3 nightShadow=vec3(.10,.13,.18);
+            vec3 nightMid=vec3(.28,.34,.44);
+            vec3 nightLight=vec3(.52,.58,.68);
+            float night=smoothstep(.10,.98,uEclipse);
             vec3 shadow=mix(dayShadow,nightShadow,night);
             vec3 mid=mix(dayMid,nightMid,night);
             vec3 light=mix(dayLight,nightLight,night);
 
-            float midStep=step(.26,exposure);
-            float lightStep=step(.62,exposure);
+            // ColorRamp constante: 3 tons.
+            float midStep=step(.34,exposure);
+            float lightStep=step(.73,exposure);
             vec3 color=mix(shadow,mid,midStep);
             color=mix(color,light,lightStep);
-            outColor=vec4(color,.90);
+
+            // Sem aspecto oco: alpha cheia. Fading so muito perto do player e bem longe.
+            float nearFade=smoothstep(22.0,44.0,vCloudDistance);
+            float farFade=1.0-smoothstep(3150.0,3650.0,vCloudDistance);
+            float visibility=clamp(uAlpha,0.0,1.0)*nearFade*farFade;
+            if(visibility<0.02) discard;
+            if(dither>visibility) discard;
+
+            outColor=vec4(color,1.0);
         }
         """;
 }
