@@ -541,8 +541,15 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
         if(clouds!=null && cloudVisibility>.006f){
             GLES30.glUseProgram(cloudP);
-            GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
+            float[] cloudView=new float[16],cloudProj=new float[16],cloudVp=new float[16];
+            Matrix.setLookAtM(cloudView,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
+            float cloudAspect=width/(float)Math.max(1,height);
+            float cloudHalfH=210f,cloudHalfW=cloudHalfH*cloudAspect;
+            Matrix.orthoM(cloudProj,0,-cloudHalfW,cloudHalfW,-cloudHalfH,cloudHalfH,1f,4200f);
+            Matrix.multiplyMM(cloudVp,0,cloudProj,0,cloudView,0);
+            GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,cloudVp,0);
             v3(cloudP,"uSun",SUN);
+            f1(cloudP,"uAlpha",cloudVisibility);
             f1(cloudP,"uEclipse",eclipse);
             GLES30.glUniform3f(loc(cloudP,"uEye"),x,eyeY,z);
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);

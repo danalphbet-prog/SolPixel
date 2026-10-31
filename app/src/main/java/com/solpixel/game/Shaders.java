@@ -943,51 +943,47 @@ final class Shaders {
         uniform float uAlpha,uEclipse;
         out vec4 outColor;
         float bayer(vec2 pixel){
-            // Bayer 4x4 com pixels agrupados em 3x3 para estética PS1.
             const float b[16]=float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
             ivec2 p=ivec2(mod(floor(pixel),4.0));
             return (b[p.x+4*p.y]+.5)/16.0;
         }
         void main(){
-            // O contorno continua voxelado. Fade por dithering fixo, sem serrilhado temporal.
-            vec2 pixel=floor(gl_FragCoord.xy/3.0);
+            vec2 pixel=floor(gl_FragCoord.xy/2.0);
             float dither=bayer(pixel);
             float visibility=clamp(uAlpha/.90,0.0,1.0);
             float coverage=visibility*visibility*(3.0-2.0*visibility);
             float farDither=smoothstep(1400.0,3700.0,vCloudDistance);
-            if(dither>coverage*mix(1.0,.70,farDither))discard;
+            if(dither>coverage*mix(1.0,.78,farDither))discard;
 
             vec3 n=normalize(vNormal);
             vec3 sun=normalize(uSun);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
-            // Amostragem em blocos, sem gradiente de textura sobre as tres tintas.
             vec2 uvPixel=floor(uv*64.0)/64.0;
             float mask=texture(uCloudMask,uvPixel*.95).r;
-            // Luz direcional por face; base (~60%), sombra (~30%), brilho (~10%)
-            // sao metas artisticas: cobertura efetiva depende da geometria da nuvem.
-            float direct=max(0.0,dot(n,sun));
-            float exposure=.21+.50*direct+.12*n.y+.07*n.z;
-            exposure+=(mask-.5)*.065+(dither-.5)*.045;
 
-            // Paletas diurnas: azul-acinzentado, branco-azulado, branco-creme.
-            vec3 dayShadow=vec3(.34,.43,.56);
-            vec3 dayBase=vec3(.82,.90,.98);
-            vec3 dayLight=vec3(1.0,.98,.92);
-            // Paletas noturnas: mesmas tres faixas, escurecidas pelo eclipse.
-            vec3 nightShadow=vec3(.055,.079,.13);
-            vec3 nightBase=vec3(.16,.23,.35);
-            vec3 nightLight=vec3(.31,.39,.50);
+            float direct=dot(n,sun);
+            float opposite=max(0.0,-direct);
+            float underside=max(0.0,-n.y);
+            float sideShade=(1.0-max(0.0,direct))*0.22;
+            float exposure=.30 + max(0.0,direct)*.62 + max(0.0,n.y)*.08;
+            exposure -= opposite*.34 + underside*.28 + sideShade;
+            exposure += (mask-.5)*.05 + (dither-.5)*.03;
+
+            vec3 dayShadow=vec3(.31,.40,.53);
+            vec3 dayMid=vec3(.73,.84,.95);
+            vec3 dayLight=vec3(.99,.99,.95);
+            vec3 nightShadow=vec3(.055,.075,.12);
+            vec3 nightMid=vec3(.18,.24,.36);
+            vec3 nightLight=vec3(.33,.40,.52);
             float night=smoothstep(.08,.96,uEclipse);
             vec3 shadow=mix(dayShadow,nightShadow,night);
-            vec3 base=mix(dayBase,nightBase,night);
+            vec3 mid=mix(dayMid,nightMid,night);
             vec3 light=mix(dayLight,nightLight,night);
 
-            // Interpolacao CONSTANT: step escolhe APENAS uma das 3 cores.
-            float baseStep=step(.255,exposure);
-            float lightStep=step(.585,exposure);
-            vec3 color=mix(shadow,base,baseStep);
+            float midStep=step(.26,exposure);
+            float lightStep=step(.62,exposure);
+            vec3 color=mix(shadow,mid,midStep);
             color=mix(color,light,lightStep);
-            // Preserva 90% de opacidade e o fade por dithering do jogo.
             outColor=vec4(color,.90);
         }
         """;
