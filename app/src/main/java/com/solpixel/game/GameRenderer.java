@@ -543,7 +543,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUseProgram(cloudP);
             float[] cloudView=new float[16],cloudProj=new float[16],cloudVp=new float[16];
             Matrix.setLookAtM(cloudView,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
-            float cloudAspect=width/(float)Math.max(1,height);
+            float cloudAspect=sceneW/(float)Math.max(1,sceneH);
             float cloudHalfH=210f,cloudHalfW=cloudHalfH*cloudAspect;
             Matrix.orthoM(cloudProj,0,-cloudHalfW,cloudHalfW,-cloudHalfH,cloudHalfH,1f,4200f);
             Matrix.multiplyMM(cloudVp,0,cloudProj,0,cloudView,0);
