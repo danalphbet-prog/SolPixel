@@ -951,7 +951,7 @@ final class Shaders {
             // Dithering mais fino: pontos menores, 1:1 ao pixel.
             float dither=bayer4(gl_FragCoord.xy);
 
-            vec3 n=normalize(vNormal);
+            vec3 n=normalize(-vNormal);
             vec3 sun=normalize(uSun);
             vec2 uv=abs(n.y)>.5?vLocal.xz:(abs(n.x)>.5?vLocal.zy:vLocal.xy);
             vec2 uvPixel=floor(uv*96.0)/96.0;
