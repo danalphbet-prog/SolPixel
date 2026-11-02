@@ -24,6 +24,13 @@ public final class GameActivity extends Activity {
     volatile int renderDistance=260;
     volatile boolean cloudsOn=true;
     volatile int worldRevision=0;
+    // 0=Leve, 1=Desempenho, 2=Grafico, -1=ajuste personalizado.
+    volatile int graphicsPreset=1;
+    volatile boolean forestShadowOn=true;
+    volatile int forestShadowDistance=115;
+    // Onde cada faixa LOD comeca: 20%,50%,80%,90%,95%,99%.
+    volatile int[] lodDistances={45,90,180,300,700,3000};
+    volatile int lodRevision=0;
 
 
     @Override public void onCreate(Bundle savedInstanceState) {
@@ -34,6 +41,15 @@ public final class GameActivity extends Activity {
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
         cloudsOn=preferences.getBoolean("clouds",true);
+        graphicsPreset=Math.max(-1,Math.min(2,preferences.getInt("graphicsPreset",1)));
+        forestShadowOn=preferences.getBoolean("forestShadowOn",true);
+        forestShadowDistance=Math.max(10,Math.min(1000,preferences.getInt("forestShadowDistance",115)));
+        int[] loadedLods={45,90,180,300,700,3000};
+        for(int i=0;i<loadedLods.length;i++){
+            int d=preferences.getInt("lodStart"+i,loadedLods[i]);
+            loadedLods[i]=Math.max(i==0?10:loadedLods[i-1]+10,Math.min(4000,d));
+        }
+        lodDistances=loadedLods;
         int savedDistance=preferences.getInt("distance",260);
         // Migracao unica: descarta o raio antigo de 520 a 1000 metros.
         if(!preferences.getBoolean("v08_distance_migrated",false)){
@@ -93,11 +109,75 @@ public final class GameActivity extends Activity {
         int closest=options[0];
         for(int v:options)if(Math.abs(distance-v)<Math.abs(distance-closest))closest=v;
         renderDistance=closest;
-        preferences.edit().putInt("distance",renderDistance).apply();hud.invalidate();
+        graphicsPreset=-1;
+        preferences.edit().putInt("distance",renderDistance)
+            .putInt("graphicsPreset",-1).apply();hud.invalidate();
     }
     void setCloudsOn(boolean enabled){
         cloudsOn=enabled;
         preferences.edit().putBoolean("clouds",enabled).apply();
+        hud.invalidate();
+    }
+    void applyGraphicsPreset(int level){
+        int p=Math.max(0,Math.min(2,level));
+        graphicsPreset=p;
+        int[] lod;
+        if(p==0){
+            forestShadowOn=false;
+            forestShadowDistance=10;
+            renderDistance=180;
+            cloudsOn=false;
+            lod=new int[]{20,35,60,100,180,300};
+        }else if(p==1){
+            forestShadowOn=true;
+            forestShadowDistance=115;
+            renderDistance=260;
+            cloudsOn=true;
+            lod=new int[]{45,90,180,300,700,3000};
+        }else{
+            forestShadowOn=true;
+            // Limite maximo disponivel. A nitidez cai conforme a area aumenta.
+            forestShadowDistance=1000;
+            renderDistance=420;
+            cloudsOn=true;
+            lod=new int[]{70,130,260,600,1700,3500};
+        }
+        lodDistances=lod;
+        lodRevision++;
+        SharedPreferences.Editor editor=preferences.edit()
+            .putInt("graphicsPreset",graphicsPreset)
+            .putBoolean("forestShadowOn",forestShadowOn)
+            .putInt("forestShadowDistance",forestShadowDistance)
+            .putInt("distance",renderDistance)
+            .putBoolean("clouds",cloudsOn);
+        for(int i=0;i<lod.length;i++)editor.putInt("lodStart"+i,lod[i]);
+        editor.apply();hud.invalidate();
+    }
+    void setForestShadowDistance(int distance){
+        forestShadowDistance=Math.max(10,Math.min(1000,distance));
+        forestShadowOn=true;
+        graphicsPreset=-1;
+        preferences.edit().putInt("forestShadowDistance",forestShadowDistance)
+            .putBoolean("forestShadowOn",true).putInt("graphicsPreset",-1).apply();
+        hud.invalidate();
+    }
+    void setForestShadowOn(boolean enabled){
+        forestShadowOn=enabled;
+        graphicsPreset=-1;
+        preferences.edit().putBoolean("forestShadowOn",enabled).putInt("graphicsPreset",-1).apply();
+        hud.invalidate();
+    }
+    void setLodDistance(int index,int distance){
+        if(index<0||index>=6)return;
+        int[] arr=lodDistances.clone();
+        int min=index==0?10:arr[index-1]+10;
+        int max=index==5?4000:arr[index+1]-10;
+        arr[index]=Math.max(min,Math.min(max,distance));
+        lodDistances=arr;
+        lodRevision++;
+        graphicsPreset=-1;
+        preferences.edit().putInt("lodStart"+index,arr[index])
+            .putInt("graphicsPreset",-1).apply();
         hud.invalidate();
     }
     private void updateAudio(){

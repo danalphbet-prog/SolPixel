@@ -180,7 +180,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         try {
             broadleaf=new TreeModel(context,"arvore-16.glb");
             pines=new TreeModel(context,"arvore-2.glb");
-            treeLods=new TreeLodRenderer(context,broadleaf,pines);
+            treeLods=new TreeLodRenderer(context,broadleaf,pines,game);
         } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores/LODs GLB",ex);}
         try{macieiras=new MacieiraRenderer(context);}
         catch(Throwable ex){Log.e("Solas","Modelos de macieiras indisponiveis",ex);macieiras=null;}
@@ -283,7 +283,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             swordGlowRemaining=Math.max(0f,swordGlowRemaining-dt);
         float glowTarget=game.selectedSlot==0 && swordGlowRemaining>0f?1f:0f;
         swordGlow+=(glowTarget-swordGlow)*Math.min(1f,dt*(glowTarget>0f?9f:8f));
-        swordRays=glowTarget>0f && swordAim?swordGlow:0f;
+        float rayTarget=(glowTarget>0f && swordAim)?1f:0f;
+        swordRays+=(rayTarget-swordRays)*(1f-(float)Math.exp(-dt*6f));
+        if(swordRays<.001f)swordRays=0f;
         // Camera vertical amortecida, sem head-bob gerador de tremor.
         float surfaceY=Float.isNaN(groundedY)?World.height(x,z):groundedY;
         float targetEyeY=surfaceY+1.72f+airHeight;
@@ -305,7 +307,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         Matrix.setLookAtM(view,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
         Matrix.multiplyMM(vp,0,proj,0,view,0);
         if(forestShadows!=null && activeDecoration!=null){
-            try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines);}
+            try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines,
+                        game.forestShadowDistance,game.forestShadowOn);}
             catch(Exception e){Log.w("SolPixel","Desativando sombras nesta GPU",e);forestShadows=null;}
         }
         // Estima bosque a frente, sem examinar milhares de arvores todo frame.
@@ -616,6 +619,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             solar=forwardFactor*edgeFactor;
         }
         f1(finalP,"uSunVisible",solar);
+        f1(finalP,"uRayQuality",game.graphicsPreset==0?0f:1f);
         f1(finalP,"uEclipse",eclipse);
         updateSwordTip();
         GLES30.glUniform2f(loc(finalP,"uSwordTipUv"),swordTipUv[0],swordTipUv[1]);
@@ -680,7 +684,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if(radius<.10f)return;
         float dx=cx-swordLightPosition[0],dy=cy-swordLightPosition[1],dz=cz-swordLightPosition[2];
         float dist2=dx*dx+dy*dy+dz*dz;
-        if(dist2>85f)return;  // distância além do alcance dos 5 m.
+        if(dist2>150f)return;  // alcance da iluminacao de 7.5 m, com margem.
         int worst=0;
         for(int i=1;i<12;i++)if(swordShadowDistances[i]>swordShadowDistances[worst])worst=i;
         if(dist2>=swordShadowDistances[worst])return;
@@ -727,8 +731,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if(occlusion>=0)GLES30.glUniform4fv(occlusion,12,swordShadowSpheres,0);
     }
     private void bindForestShadow(int program){
-        boolean available=forestShadows!=null && forestShadows.ready();
+        boolean available=game.forestShadowOn && forestShadows!=null && forestShadows.ready();
         f1(program,"uShadowEnabled",available?1f:0f);
+        f1(program,"uShadowRange",available?game.forestShadowDistance:0f);
         texture(7,available?forestShadows.texture():0);
         i1(program,"uShadowMap",7);
         if(available)GLES30.glUniformMatrix4fv(loc(program,"uLightVP"),1,false,

@@ -48,6 +48,7 @@ final class Shaders {
         in vec4 vLightCoord;
         uniform sampler2D uShadowMap;
         uniform float uShadowEnabled;
+        uniform float uShadowRange;
         uniform sampler2D uGround;
         uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
         uniform float uHasTerrainTextures;
@@ -83,7 +84,7 @@ final class Shaders {
         }
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
         float sunlightFraction(vec4 lightCoord,float distanceFromEye){
-            if(uShadowEnabled<.5 || distanceFromEye>115.0)return 1.0;
+            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
             vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
             if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
             float result=0.0;
@@ -91,7 +92,7 @@ final class Shaders {
                 vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
                 result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
             }
-            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
+            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(max(0.0,uShadowRange-40.0),uShadowRange,distanceFromEye));
         }
         uniform vec4 uSwordOccluders[12];
         float swordPointShadow(vec3 pos){
@@ -116,8 +117,8 @@ final class Shaders {
             if(uSwordGlow<=.012)return vec3(0.0);
             vec3 delta=uSwordLightPos-point;
             float distanceLight=length(delta);
-            if(distanceLight>=5.0)return vec3(0.0);
-            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            if(distanceLight>=7.5)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
@@ -273,8 +274,8 @@ final class Shaders {
             if(uSwordGlow<=.012)return vec3(0.0);
             vec3 delta=uSwordLightPos-point;
             float distanceLight=length(delta);
-            if(distanceLight>=5.0)return vec3(0.0);
-            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            if(distanceLight>=7.5)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
@@ -484,6 +485,7 @@ final class Shaders {
         uniform vec2 uTexel,uSunUv,uSwordTipUv;
         uniform float uSwordRays,uSwordSwing;
         uniform float uSunVisible;
+        uniform float uRayQuality;
         uniform float uForestNear,uEclipse;
         out vec4 outColor;
         float linearDepth(float d){
@@ -526,37 +528,51 @@ final class Shaders {
                 float halo=exp(-radius*5.6)*.32+exp(-radius*16.0)*.25;
                 float spikes=pow(max(0.0,cos(angle*10.0)),32.0)*exp(-radius*4.4)*.19;
                 float shaftSamples=0.0;
-                for(int i=1;i<=12;i++){
-                    float t=float(i)/13.0;
-                    vec2 sampleUv=vUv+toSun*t;
-                    // Folhas, montanhas e as proprias nuvens recortam os raios.
-                    float clear=skyOpen(sampleUv);
-                    shaftSamples+=clear*(.38+.62*t)/12.0;
+                if(uRayQuality>.5){
+                    for(int i=1;i<=12;i++){
+                        float t=float(i)/13.0;
+                        vec2 sampleUv=vUv+toSun*t;
+                        float clear=skyOpen(sampleUv);
+                        shaftSamples+=clear*(.38+.62*t)/12.0;
+                    }
                 }
                 float irregular=.75+.25*pow(max(0.0,cos(angle*13.0+.5)),4.0);
-                float shafts=shaftSamples*exp(-radius*2.7)*irregular*.72;
-                // Feixes extras nas florestas proximas. Bloqueio de folhas
-                // pelo depth buffer; influencia apenas objetos ate 100m.
+                float originalShafts=shaftSamples*exp(-radius*2.7)*irregular*.72;
+                // God Rays existentes curvam-se, sem feixe independente.
+                // Curva k: Sol + t*(Ponta-Sol) + Normal*k*abertura*sin(pi*t)
+                float focusedShafts=0.0;
+                float focus=clamp(uSwordRays,0.0,1.0)*uRayQuality;
+                if(focus>.001){
+                    vec2 axis=uSwordTipUv-uSunUv;
+                    float axisLength=max(length(axis),.04);
+                    vec2 forwardRay=axis/axisLength;
+                    vec2 side=vec2(-forwardRay.y,forwardRay.x);
+                    vec2 fromSun=vUv-uSunUv;
+                    float along=dot(fromSun,forwardRay)/axisLength;
+                    float progress=clamp(along,0.0,1.0);
+                    float lateral=dot(fromSun,side);
+                    float fan=sin(3.14159265*progress);
+                    float spread=.026*clamp(axisLength/.42,.65,1.30);
+                    if(along>0.0 && along<1.03 && abs(lateral)<.19){
+                    for(int k=0;k<9;k++){
+                        float strand=float(k-4);
+                        float deviation=strand*spread*fan;
+                        float width=mix(.012,.0035,progress)*(1.0+.055*abs(strand));
+                        float line=exp(-pow((lateral-deviation)/width,2.0));
+                        focusedShafts=max(focusedShafts,line*(.80+.20*cos(strand*.85)));
+                    }
+                    }
+                    float endpoints=smoothstep(.0,.045,along)*
+                                    (1.0-smoothstep(.995,1.025,along));
+                    focusedShafts*=endpoints*(.20+.80*shaftSamples)*
+                                   exp(-axisLength*.35)*.80;
+                }
+                float shafts=mix(originalShafts,focusedShafts,focus);
+                // Feixes entre arvores mantidos, modulados pelo mesmo mapa de profundidade.
                 float nearby=1.0-smoothstep(46.0,100.0,dist);
                 float forestShafts=shafts*uForestNear*nearby*.95;
-                // During eclipse reduce the original sunlight god-rays by 30%.
-                color+=vec3(1.0,.79,.55)*uSunVisible*(1.0-uSwordRays)*
+                color+=vec3(1.0,.79,.55)*uSunVisible*
                        mix(1.0,.70,uEclipse)*(sunGate*(halo+spikes+shafts)+forestShafts);
-            }
-            // Feixes solares de verdade convergem do SOL até a ESPADA,
-            // não criam um círculo branco/emissivo ou PNG radial na arma.
-            if(uSwordRays>.001 && uSunVisible>.001){
-                vec2 beamVector=uSwordTipUv-uSunUv;
-                float beamLen=dot(beamVector,beamVector);
-                float along=clamp(dot(vUv-uSunUv,beamVector)/max(beamLen,.0001),0.0,1.0);
-                vec2 beamPoint=uSunUv+beamVector*along;
-                float transverse=length(vUv-beamPoint);
-                float width=mix(.032,.004,along);
-                float shape=exp(-pow(transverse/max(width,.0007),2.0));
-                float taper=smoothstep(.0,.09,along)*(1.0-smoothstep(.95,1.02,along));
-                float sourceOpen=(skyOpen(uSunUv)+skyOpen(mix(uSunUv,uSwordTipUv,.28)))*.5;
-                float shaft=shape*taper*uSwordRays*uSunVisible*(.36+.64*sourceOpen);
-                color+=vec3(1.34,1.18,1.08)*shaft;
             }
             // Rastro branco temporário da lâmina ao executar o golpe.
             if(uSwordSwing>.005){
@@ -733,6 +749,7 @@ final class Shaders {
         in vec4 vLightCoord;
         uniform sampler2D uTex,uShadowMap;
         uniform float uShadowEnabled;
+        uniform float uShadowRange;
         uniform vec3 uSun;
         uniform float uDrawDistance;
         uniform float uEclipse;
@@ -742,7 +759,7 @@ final class Shaders {
         out vec4 outColor;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         float sunlightFraction(vec4 lightCoord,float distanceFromEye){
-            if(uShadowEnabled<.5 || distanceFromEye>115.0)return 1.0;
+            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
             vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
             if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
             float result=0.0;
@@ -750,7 +767,7 @@ final class Shaders {
                 vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
                 result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
             }
-            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(75.0,115.0,distanceFromEye));
+            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(max(0.0,uShadowRange-40.0),uShadowRange,distanceFromEye));
         }
         uniform vec4 uSwordOccluders[12];
         float swordPointShadow(vec3 pos){
@@ -775,8 +792,8 @@ final class Shaders {
             if(uSwordGlow<=.012)return vec3(0.0);
             vec3 delta=uSwordLightPos-point;
             float distanceLight=length(delta);
-            if(distanceLight>=5.0)return vec3(0.0);
-            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            if(distanceLight>=7.5)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
@@ -883,8 +900,8 @@ final class Shaders {
             if(uSwordGlow<=.012)return vec3(0.0);
             vec3 delta=uSwordLightPos-point;
             float distanceLight=length(delta);
-            if(distanceLight>=5.0)return vec3(0.0);
-            float falloff=pow(max(0.0,1.0-distanceLight/5.0),2.0);
+            if(distanceLight>=7.5)return vec3(0.0);
+            float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
             return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;

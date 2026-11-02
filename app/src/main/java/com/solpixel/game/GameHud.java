@@ -21,6 +21,7 @@ public final class GameHud extends View {
     private int moveId = -1, lookId = -1, jumpId = -1;
     private int sliderId=-1;
     private int sliderWhich=-1;
+    private int settingsTab=0; // 0 geral, 1 sombras, 2 LODs
     private float lastLookX,lastLookY, stickX,stickY;
     private float density;
     GameHud(GameActivity game) {
@@ -87,20 +88,60 @@ public final class GameHud extends View {
             return;
         }
         if(game.state==3){
-            // solpixel-v08: configuracao compacta, sem controles de geracao.
-            ink(0xD90B1825);c.drawRect(0,0,w,h,p);
-            rounded(c,w*.19f,h*.07f,w*.81f,h*.95f,12,0xFA1B344A);
-            text(c,"CONFIGURAÇÕES",w*.5f,h*.20f,25,0xFFF7E8CE,true);
-            drawCheck(c,w*.33f,h*.345f,game.musicOn);
-            text(c,"Música ambiente",w*.55f,h*.36f,16,0xFFEAF0F3,false);
-            text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.475f,15,0xFFF9E3BE,true);
-            drawSlider(c,w*.31f,w*.69f,h*.54f,game.musicVolume);
-            text(c,"TERRENO  "+game.renderDistance+" m / HORIZONTE 4000 m",w*.5f,h*.635f,13,0xFFF9E3BE,true);
-            drawSlider(c,w*.31f,w*.69f,h*.70f,(game.renderDistance-180f)/240f);
-            drawCheck(c,w*.33f,h*.785f,game.cloudsOn);
-            text(c,"Nuvens 3D",w*.55f,h*.798f,16,0xFFEAF0F3,false);
-            rounded(c,w*.41f,h*.865f,w*.59f,h*.935f,8,0xFFF2BD7D);
-            text(c,"VOLTAR",w*.5f,h*.916f,13,0xFF193344,true);
+            ink(0xDF0B1825);c.drawRect(0,0,w,h,p);
+            rounded(c,w*.16f,h*.055f,w*.84f,h*.96f,13,0xFA1B344A);
+            text(c,"CONFIGURAÇÕES",w*.5f,h*.16f,23,0xFFF7E8CE,true);
+            String[] tabs={"GERAL","SOMBRAS","LODs"};
+            for(int i=0;i<3;i++){
+                float tx=w*(.315f+.185f*i);
+                rounded(c,tx-w*.083f,h*.215f,tx+w*.083f,h*.292f,6,
+                        settingsTab==i?0xFFF2BD7D:0xFF405568);
+                text(c,tabs[i],tx,h*.269f,12,
+                        settingsTab==i?0xFF193344:0xFFFFFFFF,true);
+            }
+            if(settingsTab==0){
+                drawCheck(c,w*.31f,h*.39f,game.musicOn);
+                text(c,"Música ambiente",w*.53f,h*.406f,15,0xFFEAF0F3,false);
+                text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.51f,13,0xFFF9E3BE,true);
+                drawSlider(c,w*.28f,w*.72f,h*.57f,game.musicVolume);
+                text(c,"TERRENO  "+game.renderDistance+" m",w*.5f,h*.66f,13,0xFFF9E3BE,true);
+                drawSlider(c,w*.28f,w*.72f,h*.72f,(game.renderDistance-180f)/240f);
+                drawCheck(c,w*.31f,h*.81f,game.cloudsOn);
+                text(c,"Nuvens 3D",w*.53f,h*.827f,15,0xFFEAF0F3,false);
+            }else if(settingsTab==1){
+                text(c,"PERFIL DE QUALIDADE",w*.5f,h*.37f,12,0xFFF9E3BE,true);
+                String[] presets={"LEVE","DESEMPENHO","GRÁFICO"};
+                for(int i=0;i<3;i++){
+                    float px=w*(.31f+.19f*i);
+                    rounded(c,px-w*.091f,h*.407f,px+w*.091f,h*.485f,6,
+                            game.graphicsPreset==i?0xFFF2BD7D:0xFF405568);
+                    text(c,presets[i],px,h*.463f,11,
+                            game.graphicsPreset==i?0xFF193344:0xFFFFFFFF,true);
+                }
+                drawCheck(c,w*.29f,h*.56f,game.forestShadowOn);
+                text(c,"Sombras reais de árvores",w*.53f,h*.575f,13,0xFFEAF0F3,false);
+                text(c,"ALCANCE  "+game.forestShadowDistance+" m",w*.5f,h*.675f,
+                     14,0xFFF9E3BE,true);
+                drawSlider(c,w*.27f,w*.73f,h*.735f,
+                           (game.forestShadowDistance-10f)/990f);
+                text(c,game.forestShadowDistance>300?
+                     "Acima de 300 m: sombras menos nítidas (1024 px)":"10 m a 1000 m · mapa de 1024 px",
+                     w*.5f,h*.82f,10,0xFFBBCBD4,false);
+            }else{
+                text(c,"DISTÂNCIA DE TRANSIÇÃO DE CADA LOD",w*.5f,h*.345f,
+                     12,0xFFF9E3BE,true);
+                int[] levels={20,50,80,90,95,99};
+                int[] ds=game.lodDistances;
+                for(int i=0;i<6;i++){
+                    float y=h*(.41f+.079f*i);
+                    text(c,"LOD "+levels[i]+"%  após "+ds[i]+" m",
+                         w*.5f,y,11,0xFFEAF0F3,false);
+                    drawSlider(c,w*.28f,w*.72f,y+h*.026f,
+                               lodValueToSlider(ds[i]));
+                }
+            }
+            rounded(c,w*.435f,h*.873f,w*.565f,h*.943f,8,0xFFF2BD7D);
+            text(c,"VOLTAR",w*.5f,h*.924f,12,0xFF193344,true);
             return;
         }
         // Joystick na esquerda.
@@ -174,10 +215,20 @@ public final class GameHud extends View {
         rounded(c,x0,y-dp(4),x0+(x1-x0)*value,y+dp(4),4,0xFFF4BC77);
         ink(0xFFFFF4DD);c.drawCircle(x0+(x1-x0)*value,y,dp(13),p);
     }
+    private float lodValueToSlider(int value){
+        return (float)(Math.log(Math.max(10,value)/10.0)/Math.log(400.0));
+    }
     private void applySlider(float x,float w,int which){
-        float t=Math.max(0f,Math.min(1f,(x-w*.31f)/(w*.38f)));
+        float x0=(which==2?w*.27f:w*.28f);
+        float x1=(which==2?w*.73f:w*.72f);
+        float t=Math.max(0f,Math.min(1f,(x-x0)/(x1-x0)));
         if(which==0)game.setMusicVolume(t);
         else if(which==1)game.setRenderDistance(new int[]{180,260,340,420}[Math.min(3,Math.round(t*3f))]);
+        else if(which==2)game.setForestShadowDistance(10+Math.round(t*990f));
+        else if(which>=3&&which<=8){
+            int distance=Math.round((float)(10.0*Math.pow(400.0,t)));
+            game.setLodDistance(which-3,distance);
+        }
     }
     private boolean within(float x,float y,float cx,float cy,float rx,float ry){ return Math.abs(x-cx)<=rx && Math.abs(y-cy)<=ry; }
     @Override public boolean onTouchEvent(MotionEvent e) {
@@ -193,11 +244,29 @@ public final class GameHud extends View {
                 else if(within(x,y,w/2,h*.52f+dp(25),dp(140),dp(32))) game.openSettings();
                 else if(within(x,y,w/2,h*.69f+dp(23),dp(140),dp(30))) game.mainMenu();
             } else if(game.state==3){
-                if(within(x,y,w*.5f,h*.90f,w*.11f,h*.047f))game.closeSettings();
-                else if(within(x,y,w*.43f,h*.345f,w*.18f,h*.056f))game.setMusicOn(!game.musicOn);
-                else if(within(x,y,w*.43f,h*.785f,w*.18f,h*.056f))game.setCloudsOn(!game.cloudsOn);
-                else if(Math.abs(y-h*.54f)<h*.050f){sliderId=id;sliderWhich=0;applySlider(x,w,0);}
-                else if(Math.abs(y-h*.70f)<h*.050f){sliderId=id;sliderWhich=1;applySlider(x,w,1);}
+                if(within(x,y,w*.5f,h*.908f,w*.08f,h*.044f))game.closeSettings();
+                else if(y>=h*.21f&&y<=h*.30f&&x>=w*.20f&&x<=w*.80f){
+                    int tab=Math.min(2,Math.max(0,(int)((x/w-.22f)/.185f)));
+                    settingsTab=tab;sliderId=-1;sliderWhich=-1;
+                }else if(settingsTab==0){
+                    if(within(x,y,w*.43f,h*.39f,w*.18f,h*.045f))game.setMusicOn(!game.musicOn);
+                    else if(within(x,y,w*.43f,h*.81f,w*.18f,h*.047f))game.setCloudsOn(!game.cloudsOn);
+                    else if(Math.abs(y-h*.57f)<h*.043f){sliderId=id;sliderWhich=0;applySlider(x,w,0);}
+                    else if(Math.abs(y-h*.72f)<h*.043f){sliderId=id;sliderWhich=1;applySlider(x,w,1);}
+                }else if(settingsTab==1){
+                    if(y>=h*.401f&&y<=h*.491f){
+                        float dx=x/w;
+                        if(dx>=.20f&&dx<.405f)game.applyGraphicsPreset(0);
+                        else if(dx>=.405f&&dx<.60f)game.applyGraphicsPreset(1);
+                        else if(dx>=.60f&&dx<.80f)game.applyGraphicsPreset(2);
+                    }else if(within(x,y,w*.43f,h*.56f,w*.20f,h*.048f))game.setForestShadowOn(!game.forestShadowOn);
+                    else if(Math.abs(y-h*.735f)<h*.042f){sliderId=id;sliderWhich=2;applySlider(x,w,2);}
+                }else{
+                    for(int k=0;k<6;k++){
+                        float row=h*(.41f+.079f*k)+h*.026f;
+                        if(Math.abs(y-row)<h*.037f){sliderId=id;sliderWhich=3+k;applySlider(x,w,3+k);break;}
+                    }
+                }
             } else if(inventoryOpen && game.state==1){
                 float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);
                 if(within(x,y,w-dp(41),dp(42),dp(41),dp(41))){inventoryOpen=false;}
