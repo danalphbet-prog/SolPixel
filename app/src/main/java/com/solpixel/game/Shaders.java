@@ -11,8 +11,10 @@ final class Shaders {
         layout(location=4) in float aStoneMask;
         uniform mat4 uMvp;
         uniform mat4 uLightVP;
+        uniform mat4 uLightVPFar;
         uniform vec3 uEye;
         out vec4 vLightCoord;
+        out vec4 vLightCoordFar;
         out vec3 vPos;
         out vec3 vNormal;
         out vec2 vUv;
@@ -25,6 +27,7 @@ final class Shaders {
         void main(){
             gl_Position=uMvp*vec4(aPos,1.0);
             vLightCoord=uLightVP*vec4(aPos,1.0);
+            vLightCoordFar=uLightVPFar*vec4(aPos,1.0);
             vPos=aPos;vNormal=aNormal;vUv=aUv;
             vMat=int(floor(aMaterial+0.001));
             vForest=fract(aMaterial);
@@ -46,9 +49,11 @@ final class Shaders {
         in float vPatch;
         in float vStoneMask;
         in vec4 vLightCoord;
-        uniform sampler2D uShadowMap;
+        in vec4 vLightCoordFar;
+        uniform sampler2D uShadowMap,uShadowMapFar;
         uniform float uShadowEnabled;
         uniform float uShadowRange;
+        uniform float uShadowNearDistance,uShadowFarAvailable,uShadowFarTexel;
         uniform sampler2D uGround;
         uniform sampler2D uTerrainDirt,uTerrainMiddle,uTerrainGrass;
         uniform float uHasTerrainTextures;
@@ -83,18 +88,32 @@ final class Shaders {
             return 1.0-darkness;
         }
         float hash(vec2 x){return fract(sin(dot(x,vec2(127.1,311.7)))*43758.5453);}
-        float sunlightFraction(vec4 lightCoord,float distanceFromEye){
-            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
-            vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
-            if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
-            float result=0.0;
+        float shadowTap(sampler2D map,vec4 coord,float texel,float bias){
+            vec3 q=coord.xyz/max(.0001,coord.w)*.5+.5;
+            if(q.x<=.004||q.x>=.996||q.y<=.004||q.y>=.996||q.z<=0.0||q.z>=1.0)return 1.0;
+            float lit=0.0;
             for(int yy=0;yy<2;yy++)for(int xx=0;xx<2;xx++){
-                vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
-                result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
+                vec2 off=(vec2(float(xx),float(yy))-.5)*texel;
+                lit+=step(q.z-bias,texture(map,q.xy+off).r);
             }
-            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(max(0.0,uShadowRange-40.0),uShadowRange,distanceFromEye));
+            return mix(.19,1.0,lit*.25);
         }
-        uniform vec4 uSwordOccluders[12];
+        float sunlightFraction(vec4 localCoord,vec4 distantCoord,float distanceFromEye){
+            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
+            float local=shadowTap(uShadowMap,localCoord,1.0/1024.0,.0020);
+            float shadow=local;
+            if(uShadowFarAvailable>.5){
+                float split=smoothstep(uShadowNearDistance*.76,uShadowNearDistance,distanceFromEye);
+                if(split>.001){
+                    float distant=shadowTap(uShadowMapFar,distantCoord,uShadowFarTexel,.0026);
+                    shadow=mix(local,distant,split);
+                }
+            }
+            float endFade=1.0-smoothstep(max(0.0,uShadowRange-max(20.0,uShadowRange*.06)),
+                                          uShadowRange,distanceFromEye);
+            return mix(1.0,shadow,endFade);
+        }
+                uniform vec4 uSwordOccluders[12];
         float swordPointShadow(vec3 pos){
             vec3 ray=pos-uSwordLightPos;
             float rayLength=length(ray);
@@ -192,7 +211,7 @@ final class Shaders {
                 outColor=vec4(vec3(.07,.11,.08),alpha); return;
             }
             // Sol real bloqueado pelos GLB proximos + ceu ocluido pelo dossel.
-            float lightFraction=sunlightFraction(vLightCoord,vDist);
+            float lightFraction=sunlightFraction(vLightCoord,vLightCoordFar,vDist);
             ambient*=1.0-clamp(vForest,0.0,1.0)*.36;
             vec3 direct=vec3(1.08,1.01,.90)*ndotl*.84*lightFraction*cloudShadow(vPos.xz)*bakedTerrainSun(vPos.xz);
             vec3 color=albedo*(ambient+direct);
@@ -732,8 +751,10 @@ final class Shaders {
         layout(location=4) in vec4 aRotation;
         uniform mat4 uMvp;
         uniform mat4 uLightVP;
+        uniform mat4 uLightVPFar;
         uniform vec3 uEye;
         out vec4 vLightCoord;
+        out vec4 vLightCoordFar;
         uniform vec3 uSun;
         uniform float uWindTime,uLeaf;
         out vec2 vUv;
@@ -759,6 +780,7 @@ final class Shaders {
                 world.z+=cos(wave*.77+aPosition.x*.30)*.064*tip*fade;
             }
             vLightCoord=uLightVP*vec4(world,1.0);
+            vLightCoordFar=uLightVPFar*vec4(world,1.0);
             vec3 n=vec3(aNormal.x,aNormal.y*cs-aNormal.z*sn,
                         aNormal.y*sn+aNormal.z*cs);
             vNormal=normalize(vec3(n.x*aRotation.x-n.z*aRotation.y,n.y,
@@ -777,9 +799,11 @@ final class Shaders {
         in float vForest,vDist;
         in float vGouraud;
         in vec4 vLightCoord;
-        uniform sampler2D uTex,uShadowMap;
+        in vec4 vLightCoordFar;
+        uniform sampler2D uTex,uShadowMap,uShadowMapFar;
         uniform float uShadowEnabled;
         uniform float uShadowRange;
+        uniform float uShadowNearDistance,uShadowFarAvailable,uShadowFarTexel;
         uniform vec3 uSun;
         uniform float uDrawDistance;
         uniform float uEclipse;
@@ -788,18 +812,32 @@ final class Shaders {
         uniform vec3 uSwordLightPos;
         out vec4 outColor;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-        float sunlightFraction(vec4 lightCoord,float distanceFromEye){
-            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
-            vec3 q=lightCoord.xyz/lightCoord.w*.5+.5;
-            if(q.x<=.002||q.x>=.998||q.y<=.002||q.y>=.998||q.z<=0.0||q.z>=1.0)return 1.0;
-            float result=0.0;
+        float shadowTap(sampler2D map,vec4 coord,float texel,float bias){
+            vec3 q=coord.xyz/max(.0001,coord.w)*.5+.5;
+            if(q.x<=.004||q.x>=.996||q.y<=.004||q.y>=.996||q.z<=0.0||q.z>=1.0)return 1.0;
+            float lit=0.0;
             for(int yy=0;yy<2;yy++)for(int xx=0;xx<2;xx++){
-                vec2 off=(vec2(float(xx),float(yy))-.5)/1024.0;
-                result+=step(q.z-.0025,texture(uShadowMap,q.xy+off).r);
+                vec2 off=(vec2(float(xx),float(yy))-.5)*texel;
+                lit+=step(q.z-bias,texture(map,q.xy+off).r);
             }
-            return mix(1.0,.19+.81*result*.25,1.0-smoothstep(max(0.0,uShadowRange-40.0),uShadowRange,distanceFromEye));
+            return mix(.19,1.0,lit*.25);
         }
-        uniform vec4 uSwordOccluders[12];
+        float sunlightFraction(vec4 localCoord,vec4 distantCoord,float distanceFromEye){
+            if(uShadowEnabled<.5 || distanceFromEye>uShadowRange)return 1.0;
+            float local=shadowTap(uShadowMap,localCoord,1.0/1024.0,.0020);
+            float shadow=local;
+            if(uShadowFarAvailable>.5){
+                float split=smoothstep(uShadowNearDistance*.76,uShadowNearDistance,distanceFromEye);
+                if(split>.001){
+                    float distant=shadowTap(uShadowMapFar,distantCoord,uShadowFarTexel,.0026);
+                    shadow=mix(local,distant,split);
+                }
+            }
+            float endFade=1.0-smoothstep(max(0.0,uShadowRange-max(20.0,uShadowRange*.06)),
+                                          uShadowRange,distanceFromEye);
+            return mix(1.0,shadow,endFade);
+        }
+                uniform vec4 uSwordOccluders[12];
         float swordPointShadow(vec3 pos){
             vec3 ray=pos-uSwordLightPos;
             float rayLength=length(ray);
@@ -835,7 +873,7 @@ final class Shaders {
             float upward=clamp(normalize(vNormal).y*.5+.5,0.0,1.0);
             vec3 ambient=mix(vec3(.22,.20,.17),vec3(.43,.50,.57),upward);
             float sunDiffuse=clamp(nl+(uLeaf>.5?.12:0.0),0.0,1.0);
-            float sunlightVis=sunlightFraction(vLightCoord,vDist);
+            float sunlightVis=sunlightFraction(vLightCoord,vLightCoordFar,vDist);
             vec3 sunlight=vec3(1.08,1.01,.89)*sunDiffuse*.82*sunlightVis;
             ambient*=1.0-vForest*.30;
             float canopy=1.-vForest*(uLeaf>.5?.30:.37);
@@ -844,7 +882,7 @@ final class Shaders {
             // PointLight em tempo real com oclusão das pedras e troncos.
             color+=swordPointLight(vWorld,normalize(vNormal),tex.rgb);
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
-            float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
+            float fog=smoothstep(uDrawDistance*.68,uDrawDistance*1.04,vDist)*.55;
             color=mix(color,vec3(.82,.92,1.0),fog);
             // Escurecer nevoa e folhas juntas na noite/eclipse.
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);

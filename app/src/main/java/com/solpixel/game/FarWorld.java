@@ -12,12 +12,13 @@ final class FarWorld {
     final float[] normalTrees,giantTrees;
     private FarWorld(World.Mesh g,float[] n,float[] p){ground=g;normalTrees=n;giantTrees=p;}
 
-    static FarWorld build(float cx,float cz,float nearRadius){
+    static FarWorld build(float cx,float cz,float nearRadius,float viewRadius){
+        float horizon=Math.max(nearRadius+50f,Math.min(HORIZON,viewRadius));
         World.FloatList verts=new World.FloatList();World.ShortList ids=new World.ShortList();
         for(int ring=0;ring<RINGS;ring++){
             float t=ring/(float)(RINGS-1);
             // Curva quadratica: muitos vertices perto da faixa de transicao.
-            float radius=nearRadius+(HORIZON-nearRadius)*t*t;
+            float radius=nearRadius+(horizon-nearRadius)*t*t;
             for(int k=0;k<EDGE;k++){
                 int side=k/SIDE_STEPS,step=k%SIDE_STEPS;
                 float f=step/(float)SIDE_STEPS;
@@ -47,14 +48,16 @@ final class FarWorld {
         World.FloatList normal=new World.FloatList(),pine=new World.FloatList();
         // Densidade da silhueta decresce em tres bandas independentes, evitando
         // percorrer uma grade de 4.000m com o espacamento de 4.55m do original.
-        fillTrees(cx,cz,nearRadius-16f,850f,31f,.69f,normal,pine);
-        fillTrees(cx,cz,850f,1600f,53f,.75f,normal,pine);
-        fillTrees(cx,cz,1600f,2500f,83f,.80f,normal,pine);
-        fillTrees(cx,cz,2500f,HORIZON,125f,.66f,normal,pine);
+        // Malha distante globalmente deterministica; árvores LOD em todas as bandas.
+        fillTrees(cx,cz,nearRadius-16f,Math.min(850f,horizon),28f,.76f,normal,pine);
+        fillTrees(cx,cz,850f,Math.min(1600f,horizon),46f,.78f,normal,pine);
+        fillTrees(cx,cz,1600f,Math.min(2500f,horizon),72f,.80f,normal,pine);
+        fillTrees(cx,cz,2500f,horizon,106f,.74f,normal,pine);
         return new FarWorld(new World.Mesh(verts.array(),ids.array()),normal.array(),pine.array());
     }
     private static void fillTrees(float cx,float cz,float minR,float maxR,float grid,float chance,
                                   World.FloatList normal,World.FloatList pine){
+        if(maxR<=minR)return;
         int minX=(int)Math.floor((cx-maxR)/grid)-1,maxX=(int)Math.ceil((cx+maxR)/grid)+1;
         int minZ=(int)Math.floor((cz-maxR)/grid)-1,maxZ=(int)Math.ceil((cz+maxR)/grid)+1;
         for(int iz=minZ;iz<=maxZ;iz++)for(int ix=minX;ix<=maxX;ix++){
@@ -69,7 +72,7 @@ final class FarWorld {
             float odds=chance*(.15f+.85f*forest);
             if(unit(ix*83+17,iz*59-73)>odds)continue;
             boolean isPine=unit(ix*13+91,iz*17-37)<World.pineMask(px,pz);
-            if(minR>=2500f && !isPine)continue; // sem arvore comum extra apos 2.5 km
+            // Copas comuns tambem continuam presentes ate o limite visual.
             float size=(isPine?.38f*1.20f:.77f)*(1f+.80f*unit(ix*29+71,iz*31-61));
             float offset=2.6f*size-.03f*(isPine?53f:13.3f)*size;
             float angle=unit(ix*71+13,iz*79-51)*6.2831853f;

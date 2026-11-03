@@ -22,6 +22,8 @@ public final class GameActivity extends Activity {
     volatile float musicVolume=.55f;
     // solpixel-v08: distancia menor, sem configuracao de geracao de arvores.
     volatile int renderDistance=260;
+    volatile int viewDistance=4000; // horizonte independente da malha detalhada
+    volatile int terrainDetailRadius=120; // area de microrelevo refinado
     volatile boolean cloudsOn=true;
     volatile int worldRevision=0;
     // 0=Leve, 1=Desempenho, 2=Grafico, -1=ajuste personalizado.
@@ -43,7 +45,9 @@ public final class GameActivity extends Activity {
         cloudsOn=preferences.getBoolean("clouds",true);
         graphicsPreset=Math.max(-1,Math.min(2,preferences.getInt("graphicsPreset",1)));
         forestShadowOn=preferences.getBoolean("forestShadowOn",true);
-        forestShadowDistance=Math.max(10,Math.min(1000,preferences.getInt("forestShadowDistance",115)));
+        forestShadowDistance=Math.max(10,Math.min(1000,preferences.getInt("forestShadowDistance",230)));
+        viewDistance=closest(preferences.getInt("viewDistance",4000),new int[]{1000,2000,3000,4000});
+        terrainDetailRadius=closest(preferences.getInt("terrainDetailRadius",120),new int[]{40,80,120,160,220,300});
         int[] loadedLods={45,90,180,300,700,3000};
         for(int i=0;i<loadedLods.length;i++){
             int d=preferences.getInt("lodStart"+i,loadedLods[i]);
@@ -57,7 +61,7 @@ public final class GameActivity extends Activity {
             preferences.edit().putInt("distance",260)
                 .putBoolean("v08_distance_migrated",true).apply();
         }
-        int[] distanceOptions={180,260,340,420};
+        int[] distanceOptions={180,260,340,420,520,640};
         renderDistance=distanceOptions[0];
         for(int option:distanceOptions)
             if(Math.abs(savedDistance-option)<Math.abs(savedDistance-renderDistance))
@@ -104,12 +108,35 @@ public final class GameActivity extends Activity {
         musicVolume=Math.max(0f,Math.min(1f,value));
         preferences.edit().putFloat("volume",musicVolume).apply();updateAudio();hud.invalidate();
     }
+    private static int closest(int value,int[] values){
+        int best=values[0];
+        for(int v:values)if(Math.abs(value-v)<Math.abs(value-best))best=v;
+        return best;
+    }
+    void setViewDistance(int distance){
+        int v=closest(distance,new int[]{1000,2000,3000,4000});
+        if(viewDistance==v)return;
+        viewDistance=v;worldRevision++;lodRevision++;
+        graphicsPreset=-1;
+        preferences.edit().putInt("viewDistance",v).putInt("graphicsPreset",-1).apply();
+        hud.invalidate();
+    }
+    void setTerrainDetailRadius(int distance){
+        int v=closest(distance,new int[]{40,80,120,160,220,300});
+        if(terrainDetailRadius==v)return;
+        terrainDetailRadius=v;worldRevision++;
+        graphicsPreset=-1;
+        preferences.edit().putInt("terrainDetailRadius",v).putInt("graphicsPreset",-1).apply();
+        hud.invalidate();
+    }
     void setRenderDistance(int distance){
-        int[] options={180,260,340,420};
+        int[] options={180,260,340,420,520,640};
         int closest=options[0];
         for(int v:options)if(Math.abs(distance-v)<Math.abs(distance-closest))closest=v;
+        if(renderDistance==closest)return;
         renderDistance=closest;
         graphicsPreset=-1;
+        worldRevision++;
         preferences.edit().putInt("distance",renderDistance)
             .putInt("graphicsPreset",-1).apply();hud.invalidate();
     }
@@ -126,12 +153,14 @@ public final class GameActivity extends Activity {
             forestShadowOn=false;
             forestShadowDistance=10;
             renderDistance=180;
+            viewDistance=2000;terrainDetailRadius=80;
             cloudsOn=false;
             lod=new int[]{20,35,60,100,180,300};
         }else if(p==1){
             forestShadowOn=true;
             forestShadowDistance=115;
             renderDistance=260;
+            viewDistance=3000;terrainDetailRadius=120;
             cloudsOn=true;
             lod=new int[]{45,90,180,300,700,3000};
         }else{
@@ -139,16 +168,19 @@ public final class GameActivity extends Activity {
             // Limite maximo disponivel. A nitidez cai conforme a area aumenta.
             forestShadowDistance=1000;
             renderDistance=420;
+            viewDistance=4000;terrainDetailRadius=220;
             cloudsOn=true;
             lod=new int[]{70,130,260,600,1700,3500};
         }
         lodDistances=lod;
-        lodRevision++;
+        lodRevision++;worldRevision++;
         SharedPreferences.Editor editor=preferences.edit()
             .putInt("graphicsPreset",graphicsPreset)
             .putBoolean("forestShadowOn",forestShadowOn)
             .putInt("forestShadowDistance",forestShadowDistance)
             .putInt("distance",renderDistance)
+            .putInt("viewDistance",viewDistance)
+            .putInt("terrainDetailRadius",terrainDetailRadius)
             .putBoolean("clouds",cloudsOn);
         for(int i=0;i<lod.length;i++)editor.putInt("lodStart"+i,lod[i]);
         editor.apply();hud.invalidate();

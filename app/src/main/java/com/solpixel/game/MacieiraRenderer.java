@@ -15,7 +15,7 @@ final class MacieiraRenderer {
     private static final String[] LOD={"A","B","C","D"};
     private final TreeModel[][] models=new TreeModel[3][4];
     private Placement[] lastSource;
-    private float lastX=Float.MAX_VALUE,lastZ=Float.MAX_VALUE,lastFx=8f,lastFz=8f;
+    private float lastX=Float.MAX_VALUE,lastZ=Float.MAX_VALUE,lastFx=8f,lastFz=8f,lastMaxDistance=-1f;
     private final float[][][] buckets=new float[3][4][];
 
     static final class Placement {
@@ -113,26 +113,26 @@ final class MacieiraRenderer {
         float[] finish(){return Arrays.copyOf(data,n);}
     }
 
-    void draw(int program,Placement[] source,float eyeX,float eyeZ,float fx,float fz){
+    void draw(int program,Placement[] source,float eyeX,float eyeZ,float fx,float fz,float maxDistance){
         if(source==null||source.length==0)return;
         float fl=(float)Math.hypot(fx,fz);
         if(fl>.0001f){fx/=fl;fz/=fl;}
         boolean refresh=source!=lastSource||Math.abs(eyeX-lastX)>7f||Math.abs(eyeZ-lastZ)>7f||
-            fx*lastFx+fz*lastFz<.988f;
+            fx*lastFx+fz*lastFz<.988f||Math.abs(lastMaxDistance-maxDistance)>1f;
         if(refresh){
             Builder[][] output=new Builder[3][4];
             for(int type=0;type<3;type++)for(int level=0;level<4;level++)output[type][level]=new Builder();
             for(Placement p:source){
                 float dx=p.x-eyeX,dz=p.z-eyeZ;
                 float ds=dx*dx+dz*dz;
-                if(ds>RANGE*RANGE)continue;
+                if(ds>Math.min(RANGE,maxDistance)*Math.min(RANGE,maxDistance))continue;
                 float distance=(float)Math.sqrt(ds);
                 if(distance>45f && dx*fx+dz*fz<-distance*.18f)continue;
                 output[p.kind][lod(distance)].add(p);
             }
             for(int type=0;type<3;type++)for(int level=0;level<4;level++)
                 buckets[type][level]=output[type][level].finish();
-            lastSource=source;lastX=eyeX;lastZ=eyeZ;lastFx=fx;lastFz=fz;
+            lastSource=source;lastX=eyeX;lastZ=eyeZ;lastFx=fx;lastFz=fz;lastMaxDistance=maxDistance;
         }
         for(int type=0;type<3;type++)for(int level=0;level<4;level++){
             TreeModel m=models[type][level];float[] group=buckets[type][level];

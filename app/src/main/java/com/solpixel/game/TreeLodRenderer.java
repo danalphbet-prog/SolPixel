@@ -30,6 +30,11 @@ final class TreeLodRenderer {
             }
         }
     }
+    /** Usa LOD 95 distante nas sombras de cobertura; perto continua original. */
+    TreeModel shadowModel(int kind){
+        int k=Math.max(0,Math.min(1,kind));
+        return models[k][5]!=null?models[k][5]:models[k][0];
+    }
     private int level(float distance){
         int[] starts=game.lodDistances;
         for(int i=0;i<starts.length;i++)if(distance<starts[i])return i;
@@ -48,7 +53,7 @@ final class TreeLodRenderer {
         for(int offset=0;offset+7<source.length;offset+=8){
             float dx=source[offset]-eyeX,dz=source[offset+2]-eyeZ;
             float ds=dx*dx+dz*dz;
-            float limit=kind==1?MAX_DIST:2500f; // arvores normais mantem alcance anterior
+            float limit=Math.min(MAX_DIST,game.viewDistance); // todas as especies ate 4 km
             if(ds>limit*limit)continue;
             float distance=(float)Math.sqrt(ds);
             if(distance>45f && dx*fx+dz*fz < -distance*.18f)continue;

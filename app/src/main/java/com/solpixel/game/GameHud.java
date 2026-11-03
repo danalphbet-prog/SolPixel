@@ -21,7 +21,7 @@ public final class GameHud extends View {
     private int moveId = -1, lookId = -1, jumpId = -1;
     private int sliderId=-1;
     private int sliderWhich=-1;
-    private int settingsTab=0; // 0 geral, 1 sombras, 2 LODs
+    private int settingsTab=0; // 0 geral, 1 sombras, 2 LODs, 3 distancias
     private float lastLookX,lastLookY, stickX,stickY;
     private float density;
     GameHud(GameActivity game) {
@@ -91,10 +91,10 @@ public final class GameHud extends View {
             ink(0xDF0B1825);c.drawRect(0,0,w,h,p);
             rounded(c,w*.16f,h*.055f,w*.84f,h*.96f,13,0xFA1B344A);
             text(c,"CONFIGURAÇÕES",w*.5f,h*.16f,23,0xFFF7E8CE,true);
-            String[] tabs={"GERAL","SOMBRAS","LODs"};
-            for(int i=0;i<3;i++){
-                float tx=w*(.315f+.185f*i);
-                rounded(c,tx-w*.083f,h*.215f,tx+w*.083f,h*.292f,6,
+            String[] tabs={"GERAL","SOMBRAS","LODs","DISTÂNCIA"};
+            for(int i=0;i<4;i++){
+                float tx=w*(.245f+.17f*i);
+                rounded(c,tx-w*.077f,h*.215f,tx+w*.077f,h*.292f,6,
                         settingsTab==i?0xFFF2BD7D:0xFF405568);
                 text(c,tabs[i],tx,h*.269f,12,
                         settingsTab==i?0xFF193344:0xFFFFFFFF,true);
@@ -104,8 +104,8 @@ public final class GameHud extends View {
                 text(c,"Música ambiente",w*.53f,h*.406f,15,0xFFEAF0F3,false);
                 text(c,"VOLUME  "+Math.round(game.musicVolume*100)+"%",w*.5f,h*.51f,13,0xFFF9E3BE,true);
                 drawSlider(c,w*.28f,w*.72f,h*.57f,game.musicVolume);
-                text(c,"TERRENO  "+game.renderDistance+" m",w*.5f,h*.66f,13,0xFFF9E3BE,true);
-                drawSlider(c,w*.28f,w*.72f,h*.72f,(game.renderDistance-180f)/240f);
+                text(c,"TERRENO PRÓXIMO  "+game.renderDistance+" m",w*.5f,h*.66f,13,0xFFF9E3BE,true);
+                drawSlider(c,w*.28f,w*.72f,h*.72f,(game.renderDistance-180f)/460f);
                 drawCheck(c,w*.31f,h*.81f,game.cloudsOn);
                 text(c,"Nuvens 3D",w*.53f,h*.827f,15,0xFFEAF0F3,false);
             }else if(settingsTab==1){
@@ -124,10 +124,9 @@ public final class GameHud extends View {
                      14,0xFFF9E3BE,true);
                 drawSlider(c,w*.27f,w*.73f,h*.735f,
                            (game.forestShadowDistance-10f)/990f);
-                text(c,game.forestShadowDistance>300?
-                     "Acima de 300 m: sombras menos nítidas (1024 px)":"10 m a 1000 m · mapa de 1024 px",
+                text(c,"Cascata próxima nítida + sombras distantes",
                      w*.5f,h*.82f,10,0xFFBBCBD4,false);
-            }else{
+            }else if(settingsTab==2){
                 text(c,"DISTÂNCIA DE TRANSIÇÃO DE CADA LOD",w*.5f,h*.345f,
                      12,0xFFF9E3BE,true);
                 int[] levels={20,50,80,90,95,99};
@@ -139,6 +138,13 @@ public final class GameHud extends View {
                     drawSlider(c,w*.28f,w*.72f,y+h*.026f,
                                lodValueToSlider(ds[i]));
                 }
+            }else{
+                text(c,"HORIZONTE VISÍVEL  "+game.viewDistance+" m",w*.5f,h*.385f,13,0xFFF9E3BE,true);
+                drawSlider(c,w*.28f,w*.72f,h*.45f,(game.viewDistance-1000f)/3000f);
+                text(c,"RELEVO REFINADO  "+game.terrainDetailRadius+" m",w*.5f,h*.575f,13,0xFFF9E3BE,true);
+                drawSlider(c,w*.28f,w*.72f,h*.64f,(game.terrainDetailRadius-40f)/260f);
+                text(c,"Terreno próximo: "+game.renderDistance+" m",w*.5f,h*.735f,11,0xFFEAF0F3,false);
+                text(c,"Árvores LOD até o horizonte selecionado",w*.5f,h*.795f,10,0xFFBBCBD4,false);
             }
             rounded(c,w*.435f,h*.873f,w*.565f,h*.943f,8,0xFFF2BD7D);
             text(c,"VOLTAR",w*.5f,h*.924f,12,0xFF193344,true);
@@ -223,12 +229,13 @@ public final class GameHud extends View {
         float x1=(which==2?w*.73f:w*.72f);
         float t=Math.max(0f,Math.min(1f,(x-x0)/(x1-x0)));
         if(which==0)game.setMusicVolume(t);
-        else if(which==1)game.setRenderDistance(new int[]{180,260,340,420}[Math.min(3,Math.round(t*3f))]);
+        else if(which==1)game.setRenderDistance(new int[]{180,260,340,420,520,640}[Math.min(5,Math.round(t*5f))]);
         else if(which==2)game.setForestShadowDistance(10+Math.round(t*990f));
         else if(which>=3&&which<=8){
             int distance=Math.round((float)(10.0*Math.pow(400.0,t)));
             game.setLodDistance(which-3,distance);
-        }
+        }else if(which==9)game.setViewDistance(1000+Math.round(t*3000f));
+        else if(which==10)game.setTerrainDetailRadius(40+Math.round(t*260f));
     }
     private boolean within(float x,float y,float cx,float cy,float rx,float ry){ return Math.abs(x-cx)<=rx && Math.abs(y-cy)<=ry; }
     @Override public boolean onTouchEvent(MotionEvent e) {
@@ -246,7 +253,7 @@ public final class GameHud extends View {
             } else if(game.state==3){
                 if(within(x,y,w*.5f,h*.908f,w*.08f,h*.044f))game.closeSettings();
                 else if(y>=h*.21f&&y<=h*.30f&&x>=w*.20f&&x<=w*.80f){
-                    int tab=Math.min(2,Math.max(0,(int)((x/w-.22f)/.185f)));
+                    int tab=Math.min(3,Math.max(0,(int)((x/w-.16f)/.17f)));
                     settingsTab=tab;sliderId=-1;sliderWhich=-1;
                 }else if(settingsTab==0){
                     if(within(x,y,w*.43f,h*.39f,w*.18f,h*.045f))game.setMusicOn(!game.musicOn);
@@ -261,11 +268,14 @@ public final class GameHud extends View {
                         else if(dx>=.60f&&dx<.80f)game.applyGraphicsPreset(2);
                     }else if(within(x,y,w*.43f,h*.56f,w*.20f,h*.048f))game.setForestShadowOn(!game.forestShadowOn);
                     else if(Math.abs(y-h*.735f)<h*.042f){sliderId=id;sliderWhich=2;applySlider(x,w,2);}
-                }else{
+                }else if(settingsTab==2){
                     for(int k=0;k<6;k++){
                         float row=h*(.41f+.079f*k)+h*.026f;
                         if(Math.abs(y-row)<h*.037f){sliderId=id;sliderWhich=3+k;applySlider(x,w,3+k);break;}
                     }
+                }else{
+                    if(Math.abs(y-h*.45f)<h*.045f){sliderId=id;sliderWhich=9;applySlider(x,w,9);}
+                    else if(Math.abs(y-h*.64f)<h*.045f){sliderId=id;sliderWhich=10;applySlider(x,w,10);}
                 }
             } else if(inventoryOpen && game.state==1){
                 float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);

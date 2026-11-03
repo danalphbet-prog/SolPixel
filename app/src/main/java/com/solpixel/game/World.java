@@ -136,6 +136,9 @@ public final class World {
     }
     static Mesh ground(float cx,float cz){return ground(cx,cz,156f);}
     static Mesh ground(float cx,float cz,float radius){
+        return ground(cx,cz,radius,120f);
+    }
+    static Mesh ground(float cx,float cz,float radius,float requestedDetailRadius){
         float step=(radius*2f)/(SAMPLES-1);
         float left=cx-radius,top=cz-radius;
         FloatList v=new FloatList();ShortList ids=new ShortList();
@@ -143,8 +146,9 @@ public final class World {
         for(int z=0;z<SAMPLES;z++)for(int x=0;x<SAMPLES;x++)
             groundVertex(v,left+x*step,top+z*step,Float.NaN);
         final int center=(SAMPLES-1)/2;
+        // Maximo 32 celulas: mantem vertices da malha refinada < 65535 (indices unsigned short).
         final int half=TerrainDetails.TERRAIN_DETAIL_LOD_ENABLED?
-            TerrainDetails.NEAR_DETAIL_HALF_CELLS:0;
+            Math.max(4,Math.min(32,Math.round(requestedDetailRadius/Math.max(.1f,step)))):0;
         for(int z=0;z<SAMPLES-1;z++)for(int x=0;x<SAMPLES-1;x++){
             // Remove as faces centrais antes de inserir a malha fina (sem z-fighting).
             if(half>0 && x>=center-half && x<center+half &&

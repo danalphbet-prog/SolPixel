@@ -259,9 +259,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             nextWorldRadius=radius;
             worldWorker.execute(()->{
                 try{
-                    World.Mesh near=World.ground(cx,cz,radius);
+                    World.Mesh near=World.ground(cx,cz,radius,game.terrainDetailRadius);
                     World.Decoration decoration=World.decorate(cx,cz,radius);
-                    FarWorld distant=FarWorld.build(cx,cz,radius);
+                    FarWorld distant=FarWorld.build(cx,cz,radius,game.viewDistance);
                     MacieiraRenderer.Placement[] macieiraPlacements=MacieiraRenderer.generate(cx,cz);
                     TerrainShadowBake.Data baked=TerrainShadowBake.generate(cx,cz,radius);
                     completedWorld=new BuildResult(cx,cz,near,decoration,distant,baked,macieiraPlacements);
@@ -309,7 +309,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         Matrix.multiplyMM(vp,0,proj,0,view,0);
         if(forestShadows!=null && activeDecoration!=null){
             try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines,
-                        game.forestShadowDistance,game.forestShadowOn && SUN[1]>.08f);}
+                        treeLods,farWorld,game.forestShadowDistance,game.forestShadowOn && SUN[1]>.08f);}
             catch(Exception e){Log.w("SolPixel","Desativando sombras nesta GPU",e);forestShadows=null;}
         }
         // Estima bosque a frente, sem examinar milhares de arvores todo frame.
@@ -457,7 +457,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         i1(meshP,"uTerrainGrass",4);
         f1(meshP,"uHasTerrainTextures",hasTerrainTextures?1f:0f);
         v3(meshP,"uGrassDayTint",grassTint);
-        f1(meshP,"uDrawDistance",FarWorld.HORIZON);
+        f1(meshP,"uDrawDistance",game.viewDistance);
         f1(meshP,"uEclipse",darkness);
         applySwordLight(meshP);
         GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
@@ -482,7 +482,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(rockProgram,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(rockProgram,"uEye"),x,eyeY,z);
             v3(rockProgram,"uSun",SUN);
-            f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
+            f1(rockProgram,"uDrawDistance",game.viewDistance);
             f1(rockProgram,"uEclipse",darkness);
             applySwordLight(rockProgram);
             if(terrainShadowBake!=null)terrainShadowBake.bind(rockProgram);
@@ -498,7 +498,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
-            f1(treeP,"uDrawDistance",FarWorld.HORIZON);
+            f1(treeP,"uDrawDistance",game.viewDistance);
             f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
@@ -520,12 +520,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniformMatrix4fv(loc(treeP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
-            f1(treeP,"uDrawDistance",FarWorld.HORIZON);
+            f1(treeP,"uDrawDistance",game.viewDistance);
             f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
-            macieiras.draw(treeP,activeMacieiras,x,z,forward[0],forward[2]);
+            macieiras.draw(treeP,activeMacieiras,x,z,forward[0],forward[2],game.viewDistance);
         }
         // Cartoes cruzados com alpha cutout: sem transparencia ordenada, sem colisao.
         if(grasses!=null && activeDecoration!=null){
@@ -762,6 +762,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         i1(program,"uShadowMap",7);
         if(available)GLES30.glUniformMatrix4fv(loc(program,"uLightVP"),1,false,
                                                forestShadows.lightVP,0);
+        boolean far=available && forestShadows.farReady();
+        f1(program,"uShadowFarAvailable",far?1f:0f);
+        f1(program,"uShadowNearDistance",available?forestShadows.nearDistance():0f);
+        f1(program,"uShadowFarTexel",far?1f/forestShadows.farSize():1f/1024f);
+        texture(10,far?forestShadows.farTexture():0);
+        i1(program,"uShadowMapFar",10);
+        if(far)GLES30.glUniformMatrix4fv(loc(program,"uLightVPFar"),1,false,
+                                         forestShadows.farLightVP,0);
     }
     private int loadTexture(){
         int[] t=new int[1];GLES30.glGenTextures(1,t,0);
