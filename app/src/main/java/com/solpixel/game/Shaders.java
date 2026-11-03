@@ -532,9 +532,11 @@ final class Shaders {
         in vec2 vUv;
         uniform sampler2D uScene,uDepth,uBloom;
         uniform vec2 uTexel,uSunUv,uSwordTipUv;
-        uniform float uSwordRays,uSwordSwing;
+        uniform float uSwordRays;
+        uniform vec3 uRayTint;
         uniform float uSunVisible;
         uniform float uRayQuality;
+        uniform float uSoftPixels;
         uniform float uForestNear,uEclipse;
         out vec4 outColor;
         float linearDepth(float d){
@@ -549,6 +551,13 @@ final class Shaders {
         }
         void main(){
             vec3 color=texture(uScene,vUv).rgb;
+            if(uSoftPixels>.5){
+                // Grid suavissimo: celulas de 1,35 pixels na resolucao interna.
+                vec2 block=uTexel*1.35;
+                vec2 uvPix=(floor(vUv/block)+.5)*block;
+                vec3 pixelated=texture(uScene,clamp(uvPix,uTexel*.5,vec2(1.0)-uTexel*.5)).rgb;
+                color=mix(color,pixelated,.28);
+            }
             float d=texture(uDepth,vUv).r;
             float dist=linearDepth(d);
             float blur=smoothstep(18.0,145.0,dist)*.85;
@@ -620,20 +629,8 @@ final class Shaders {
                 // Feixes entre arvores mantidos, modulados pelo mesmo mapa de profundidade.
                 float nearby=1.0-smoothstep(46.0,100.0,dist);
                 float forestShafts=shafts*uForestNear*nearby*.95;
-                color+=vec3(1.0,.79,.55)*uSunVisible*
+                color+=uRayTint*uSunVisible*
                        mix(1.0,.70,uEclipse)*(sunGate*(halo+spikes+shafts)+forestShafts);
-            }
-            // Rastro branco temporário da lâmina ao executar o golpe.
-            if(uSwordSwing>.005){
-                vec2 pivot=vec2(.86,.08);
-                vec2 a=vUv-pivot;
-                vec2 b=uSwordTipUv-pivot;
-                float radial=length(a);
-                float r=length(b);
-                float angleA=atan(a.y,a.x),angleB=atan(b.y,b.x);
-                float sep=abs(atan(sin(angleA-angleB),cos(angleA-angleB)));
-                float ribbon=exp(-pow((radial-r)/.013,2.0))*(1.0-smoothstep(.03,1.04,sep));
-                color+=vec3(1.26,1.32,1.42)*ribbon*uSwordSwing*.73;
             }
             color=color/(color+vec3(1.0));
             color=pow(color,vec3(.85));

@@ -6,8 +6,8 @@ android {
         applicationId 'com.solpixel.game'
         minSdk 26
         targetSdk 35
-        versionCode 9
-        versionName '0.5.6-solas-sombras-lod'
+        versionCode 10
+        versionName '0.5.7-inventario-audio-pixel'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

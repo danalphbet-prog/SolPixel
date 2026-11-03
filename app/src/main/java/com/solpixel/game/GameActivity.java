@@ -4,19 +4,28 @@ import android.app.Activity;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.media.MediaPlayer;
+import android.media.SoundPool;
+import android.media.AudioAttributes;
 import android.content.SharedPreferences;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-public final class GameActivity extends Activity {
+public final class GameActivity extends Activity { // SOLAS_INVENTORY_AUDIO_RAYS_PATCH_01
     // 0 = menu, 1 = jogando, 2 = pausa, 3 = configuracoes
     volatile int state = 0;
-    volatile int selectedSlot=0; // mochila 7 slots, espada inicial no slot zero
+    volatile int selectedSlot=0; // mao selecionada (0=esquerda, 1=direita)
+    final InventorySlots inventory=new InventorySlots();
+    volatile boolean softPixelOn=true;
     GameRenderer renderer;
     GameHud hud;
     GLSurfaceView surface;
     private MediaPlayer ambient;
+    private MediaPlayer forestAmbient;
+    private SoundPool swordSoundPool;
+    private int swordSoundId=0;
+    private volatile float forestSoundTarget=0f;
+    private float forestSoundVolume=0f;
     private SharedPreferences preferences;
     volatile boolean musicOn=true;
     volatile float musicVolume=.55f;
@@ -40,6 +49,8 @@ public final class GameActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         immersive();
         preferences=getSharedPreferences("SolPixelSettings",MODE_PRIVATE);
+        inventory.restore(preferences.getString("solasInventory12", ""));
+        softPixelOn=preferences.getBoolean("softPixelOn",true);
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
         cloudsOn=preferences.getBoolean("clouds",true);
@@ -70,6 +81,18 @@ public final class GameActivity extends Activity {
             ambient=MediaPlayer.create(this,R.raw.ambient_music);
             if(ambient!=null){ambient.setLooping(true);ambient.setVolume(musicVolume,musicVolume);}
         }catch(Exception ignored){ambient=null;}
+        try {
+            forestAmbient=MediaPlayer.create(this,R.raw.forest_matagal);
+            if(forestAmbient!=null){forestAmbient.setLooping(true);forestAmbient.setVolume(0f,0f);}
+        }catch(Exception ignored){forestAmbient=null;}
+        try {
+            AudioAttributes attributes=new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
+            swordSoundPool=new SoundPool.Builder().setMaxStreams(3)
+                .setAudioAttributes(attributes).build();
+            swordSoundId=swordSoundPool.load(this,R.raw.sword_draw,1);
+        }catch(Exception ignored){swordSoundPool=null;swordSoundId=0;}
         renderer = new GameRenderer(this);
         surface = new GLSurfaceView(this);
         surface.setEGLContextClientVersion(3);
@@ -89,13 +112,52 @@ public final class GameActivity extends Activity {
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
             View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
+    // Inventario de 12 posicoes: os indices 10/11 sao as duas maos.
+    int itemAt(int position){return inventory.itemAt(position);}
+    boolean hasSwordEquipped(){return inventory.isSwordInHand(selectedSlot);}
+    void setSoftPixelOn(boolean enabled){
+        softPixelOn=enabled;
+        preferences.edit().putBoolean("softPixelOn",enabled).apply();
+        hud.invalidate();
+    }
+    void swapInventorySlots(int from,int to){
+        if(inventory.swap(from,to)){
+            preferences.edit().putString("solasInventory12",inventory.save()).apply();
+            renderer.swordAction(false);
+            hud.invalidate();
+        }
+    }
+    void playSwordSound(){
+        if(!hasSwordEquipped() || swordSoundPool==null || swordSoundId<=0)return;
+        try{swordSoundPool.play(swordSoundId,.90f,.90f,1,0,1f);}
+        catch(Exception ignored){}
+    }
+    // Recebe densidade florestal do render thread; o MediaPlayer e manipulado na UI.
+    void updateForestAmbience(float proximity){
+        forestSoundTarget=Math.max(0f,Math.min(1f,proximity));
+        if(forestAmbient==null)return;
+        runOnUiThread(()->{
+            if(forestAmbient==null)return;
+            try{
+                float target=state==1?forestSoundTarget*.73f:0f;
+                forestSoundVolume+=(target-forestSoundVolume)*.19f;
+                if(target<.006f && forestSoundVolume<.012f){
+                    forestSoundVolume=0f;
+                    if(forestAmbient.isPlaying())forestAmbient.pause();
+                    return;
+                }
+                forestAmbient.setVolume(forestSoundVolume,forestSoundVolume);
+                if(!forestAmbient.isPlaying())forestAmbient.start();
+            }catch(IllegalStateException ignored){}
+        });
+    }
     void play() {
         selectedSlot=0;renderer.reset(); state = 1;
         hud.resetControls(); hud.invalidate();
         updateAudio();
     }
     void pause() {
-        if (state == 1) { state = 2; renderer.move(0,0); hud.resetControls(); hud.invalidate(); }
+        if (state == 1) { state = 2; renderer.move(0,0); hud.resetControls(); hud.invalidate();updateAudio(); }
     }
     void resumeGame() { state = 1; hud.invalidate();updateAudio(); }
     void mainMenu() { state = 0; renderer.move(0,0); hud.resetControls(); hud.invalidate();updateAudio(); }
@@ -213,16 +275,21 @@ public final class GameActivity extends Activity {
         hud.invalidate();
     }
     private void updateAudio(){
-        if(ambient==null)return;
-        try {
+        if(ambient!=null)try {
             ambient.setVolume(musicVolume,musicVolume);
             if(musicOn && state!=0){if(!ambient.isPlaying())ambient.start();}
             else if(ambient.isPlaying())ambient.pause();
         }catch(IllegalStateException ignored){}
+        if(forestAmbient!=null && state!=1){
+            try{if(forestAmbient.isPlaying())forestAmbient.pause();}
+            catch(IllegalStateException ignored){}
+            forestSoundVolume=0f;
+        }
     }
     @Override protected void onPause() {
         if (state == 1) pause();
         if(ambient!=null && ambient.isPlaying())ambient.pause();
+        if(forestAmbient!=null && forestAmbient.isPlaying())forestAmbient.pause();
         surface.onPause(); super.onPause();
     }
     @Override protected void onResume() {
@@ -234,6 +301,8 @@ public final class GameActivity extends Activity {
     }
     @Override protected void onDestroy(){
         if(ambient!=null){ambient.release();ambient=null;}
+        if(forestAmbient!=null){forestAmbient.release();forestAmbient=null;}
+        if(swordSoundPool!=null){swordSoundPool.release();swordSoundPool=null;}
         super.onDestroy();
     }
     @Override public void onBackPressed() {

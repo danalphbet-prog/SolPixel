@@ -47,6 +47,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private float moonVisualAlpha=.5f;
     private float starsTwinkleTime=0f;
     private float swordRays=0f;
+    private boolean swordRayMoon=false;
+    private volatile boolean treeHitRequested=false;
+    private static final float[] SUN_RAY_TINT={1.0f,.79f,.55f};
+    private static final float[] MOON_RAY_TINT={.57f,.67f,.96f};
     private float swordSwingTime=-1f;
     private final float[] swordShadowSpheres=new float[48];
     private final float[] swordShadowDistances=new float[12];
@@ -121,11 +125,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     void move(float vx,float vy){stickX=vx;stickY=vy;}
     void jump(){jumpPressed=true;}
     void swordAction(boolean active){
-        if(active && !swordButtonHeld && game.selectedSlot==0)swordSwingTime=0f;
+        if(active && !swordButtonHeld && game.hasSwordEquipped()){
+            swordSwingTime=0f;
+            treeHitRequested=true; // encaminhado no render thread sem derrubar arvores
+        }
         swordButtonHeld=active;
     }
-    // Necessario para os icones GameHud da v0.4.1.
-    boolean swordActive(){return swordGlowRemaining>0f && game.selectedSlot==0;}
+    boolean swordActive(){return swordGlowRemaining>0f && game.hasSwordEquipped();}
     void reset(){resetRequested=true;}
     synchronized void look(float dx,float dy){lookDX+=dx;lookDY+=dy;}
     private synchronized float[] consumeLook(){
@@ -206,6 +212,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
+        if(treeHitRequested){
+            treeHitRequested=false;
+            TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw));
+        }
         if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.64f)swordSwingTime=-1f;}
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
         CelestialCycle.sunDirection(celestialTime,SUN);
@@ -273,16 +283,22 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float faceP=(float)Math.cos(pitch);
         float aimSun=(float)Math.sin(yaw)*faceP*SUN[0]+(float)Math.sin(pitch)*SUN[1]-
                      (float)Math.cos(yaw)*faceP*SUN[2];
-        boolean swordAim=(aimSun>.965f && eclipse>.15f);
-        // One tap near the eclipse starts a complete 40-second charge.
+        float aimMoon=(float)Math.sin(yaw)*faceP*moonDir[0]+(float)Math.sin(pitch)*moonDir[1]-
+                      (float)Math.cos(yaw)*faceP*moonDir[2];
+        // Mesmo sistema de foco para sol, eclipse e lua. Eclipse prioriza a cor solar.
+        boolean sunAim=aimSun>.965f && SUN[1]>.01f;
+        boolean moonAim=aimMoon>.965f && moonDir[1]>.01f &&
+                        CelestialCycle.night(celestialTime)>.25f && eclipse<.70f;
+        boolean swordAim=sunAim||moonAim;
+        if(swordAim)swordRayMoon=moonAim && !sunAim;
         if(!swordButtonHeld)swordPressConsumed=false;
         if(swordButtonHeld && !swordPressConsumed){
             swordPressConsumed=true;
-            if(game.selectedSlot==0 && swordAim)swordGlowRemaining=40f;
+            if(game.hasSwordEquipped() && swordAim)swordGlowRemaining=40f;
         }
         if(game.state==1 && swordGlowRemaining>0f)
             swordGlowRemaining=Math.max(0f,swordGlowRemaining-dt);
-        float glowTarget=game.selectedSlot==0 && swordGlowRemaining>0f?1f:0f;
+        float glowTarget=game.hasSwordEquipped() && swordGlowRemaining>0f?1f:0f;
         swordGlow+=(glowTarget-swordGlow)*Math.min(1f,dt*(glowTarget>0f?9f:8f));
         float rayTarget=(glowTarget>0f && swordAim)?1f:0f;
         swordRays+=(rayTarget-swordRays)*(1f-(float)Math.exp(-dt*6f));
@@ -320,6 +336,9 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             float b=World.forestDensity(x+forward[0]*28f,z+forward[2]*28f);
             float c=World.forestDensity(x+forward[0]*60f,z+forward[2]*60f);
             forestNear=Math.min(1f,Math.max(a,Math.max(b,c))*1.6f);
+            // Matagal: forte na floresta, suave nas bordas, silencioso na planicie distante.
+            float heard=Math.max(a,Math.max(b*.68f,c*.40f));
+            game.updateForestAmbience(Math.min(1f,Math.max(0f,(heard-.12f)*1.65f)));
         }
         drawScene(eyeY);
         bloom();
@@ -555,7 +574,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
             clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
         }
-        if(sword!=null && game.state==1 && game.selectedSlot==0){
+        if(sword!=null && game.state==1 && game.hasSwordEquipped()){
             // HUD 3D de arma renderizado por ultimo, nao sofre oclusao pelo relevo.
             sword.draw(proj,swordGlow,time,attackProgress(),
                        Math.min(1f,(float)Math.hypot(moveVelocityX,moveVelocityZ)/7f));
@@ -604,29 +623,33 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         texture(0,scene.color);texture(1,scene.depth);texture(2,bloomA.color);
         i1(finalP,"uScene",0);i1(finalP,"uDepth",1);i1(finalP,"uBloom",2);
         GLES30.glUniform2f(loc(finalP,"uTexel"),1f/sceneW,1f/sceneH);
+        // Mesmos feixes do sol, fonte e paleta lunar quando o golpe mira a lua.
+        boolean moonRays=swordRayMoon && swordRays>.001f;
+        float[] celestial=moonRays?moonDir:SUN;
+        v3(finalP,"uRayTint",moonRays?MOON_RAY_TINT:SUN_RAY_TINT);
         float aspect=sceneW/(float)sceneH;
-        float dx=SUN[0]*right[0]+SUN[1]*right[1]+SUN[2]*right[2];
-        float dy=SUN[0]*up[0]+SUN[1]*up[1]+SUN[2]*up[2];
-        float dz=SUN[0]*forward[0]+SUN[1]*forward[1]+SUN[2]*forward[2];
+        float dx=celestial[0]*right[0]+celestial[1]*right[1]+celestial[2]*right[2];
+        float dy=celestial[0]*up[0]+celestial[1]*up[1]+celestial[2]*up[2];
+        float dz=celestial[0]*forward[0]+celestial[1]*forward[1]+celestial[2]*forward[2];
         float fov=(float)Math.tan(Math.toRadians(67)/2);
         float ux=dz>.05f?.5f+.5f*dx/(dz*fov*aspect):-5f;
         float uy=dz>.05f?.5f+.5f*dy/(dz*fov):-5f;
         GLES30.glUniform2f(loc(finalP,"uSunUv"),ux,uy);
         // Halo angulado: surge suavemente perto da direcao solar e das bordas da tela.
         float solar=0f;
-        if(dz>.04f && SUN[1]>.01f && ux>-.25f && ux<1.25f && uy>-.25f && uy<1.25f){
+        if(dz>.04f && celestial[1]>.01f && ux>-.25f && ux<1.25f && uy>-.25f && uy<1.25f){
             float forwardFactor=Math.min(1f,Math.max(0f,(dz-.04f)/.23f));
             float edgeX=Math.min((ux+.25f)/.33f,(1.25f-ux)/.33f);
             float edgeY=Math.min((uy+.25f)/.33f,(1.25f-uy)/.33f);
             float edgeFactor=Math.min(1f,Math.max(0f,Math.min(edgeX,edgeY)));
             solar=forwardFactor*edgeFactor;
         }
-        f1(finalP,"uSunVisible",solar);
+        f1(finalP,"uSunVisible",solar*(moonRays?.68f:1f));
         f1(finalP,"uRayQuality",game.graphicsPreset==0?0f:1f);
+        f1(finalP,"uSoftPixels",game.softPixelOn?1f:0f);
         f1(finalP,"uEclipse",darkness);
         updateSwordTip();
         GLES30.glUniform2f(loc(finalP,"uSwordTipUv"),swordTipUv[0],swordTipUv[1]);
-        f1(finalP,"uSwordSwing",attackProgress());
         f1(finalP,"uSwordRays",swordRays);
         f1(finalP,"uForestNear",forestShadows!=null && forestShadows.ready()?forestNear:0f);
         fullTriangle();

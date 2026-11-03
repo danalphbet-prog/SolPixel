@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.view.MotionEvent;
+import android.os.SystemClock;
 import android.view.View;
 
 public final class GameHud extends View {
@@ -16,6 +17,8 @@ public final class GameHud extends View {
     private final Paint p = new Paint(3);
     private final Bitmap backpack,actionIcon,slotSword;
     private boolean inventoryOpen=false;
+    private int pendingSlot=-1;
+    private long bagPressUntil=0L;
     private int actionId=-1;
     private static final int[] SLOT_BORDER={0xFFF8E6C0,0xFFA9B6AF};
     private int moveId = -1, lookId = -1, jumpId = -1;
@@ -45,7 +48,7 @@ public final class GameHud extends View {
     private float dp(float v) { return v*density; }
     void resetControls() {
         moveId=lookId=jumpId=sliderId=-1; stickX=stickY=0;
-        inventoryOpen=false;actionId=-1;game.renderer.swordAction(false);
+        inventoryOpen=false;pendingSlot=-1;actionId=-1;game.renderer.swordAction(false);
         game.renderer.move(0,0);
     }
     private void ink(int color) { p.setColor(color); p.setStyle(Paint.Style.FILL); p.setStrokeWidth(dp(2)); }
@@ -60,6 +63,44 @@ public final class GameHud extends View {
           android.graphics.Typeface.create("sans-serif",0));
         p.setTextSize(dp(size)); p.setTextAlign(Paint.Align.CENTER);
         c.drawText(s,x,y,p);
+    }
+    private float inventoryCell(float w){return Math.min(dp(72), (w-dp(46))/5f);}
+    private float inventoryLeft(float w,float cell){return w*.5f-2.5f*cell;}
+    private float inventoryTop(float h,float cell){return Math.max(dp(48),h*.48f-1.4f*cell);}
+    private float handX(float w,float cell,int hand){return w*.5f+(hand==0?-.63f:.63f)*cell;}
+    private void drawItem(Canvas c,int item,float cx,float cy,float size){
+        if(item==InventorySlots.SWORD){
+            if(slotSword!=null)drawSprite(c,slotSword,cx,cy,size);
+            else text(c,"ESPADA",cx,cy+dp(5),9,0xFFF2E1B3,true);
+        }else if(item==InventorySlots.TORCH){
+            // Icone de tocha em pixel-art sem depender de um modelo 3D inexistente.
+            float k=size/48f;
+            rounded(c,cx-3*k,cy-4*k,cx+3*k,cy+21*k,1,0xFF8F5939);
+            rounded(c,cx-7*k,cy-17*k,cx+7*k,cy-3*k,2,0xFFFFA137);
+            rounded(c,cx-4*k,cy-22*k,cx+4*k,cy-8*k,2,0xFFFFE6A0);
+        }
+    }
+    private void drawBackpackButton(Canvas c,float x,float y){
+        boolean pressed=SystemClock.uptimeMillis()<bagPressUntil;
+        float scale=pressed?1.10f:1f;
+        rounded(c,x-dp(34)*scale,y-dp(33)*scale,x+dp(34)*scale,y+dp(33)*scale,8,
+                pressed?0xFFF5DBA1:(inventoryOpen?0xFFDAAC72:0xC1142330));
+        ring(c,x,y,dp(33)*scale,pressed?0xFF182D3E:0xB3EAD8B6,1.5f);
+        if(backpack!=null)drawSprite(c,backpack,x,y,dp(52)*scale);
+        else text(c,"BAG",x,y+dp(5),15,pressed?0xFF182D3E:0xFFFFFFFF,true);
+        if(pressed)postInvalidateDelayed(45);
+    }
+    private int inventoryHit(float x,float y,float w,float h){
+        float cell=inventoryCell(w),left=inventoryLeft(w,cell),top=inventoryTop(h,cell);
+        for(int i=0;i<InventorySlots.BAG_COUNT;i++){
+            float cx=left+(i%5+.5f)*cell,cy=top+(i/5+.5f)*cell;
+            if(within(x,y,cx,cy,cell*.44f,cell*.44f))return i;
+        }
+        for(int hand=0;hand<2;hand++){
+            float cx=handX(w,cell,hand),cy=top+2.83f*cell;
+            if(within(x,y,cx,cy,cell*.44f,cell*.44f))return 10+hand;
+        }
+        return -1;
     }
     @Override protected void onDraw(Canvas c) {
         super.onDraw(c);
@@ -144,7 +185,8 @@ public final class GameHud extends View {
                 text(c,"RELEVO REFINADO  "+game.terrainDetailRadius+" m",w*.5f,h*.575f,13,0xFFF9E3BE,true);
                 drawSlider(c,w*.28f,w*.72f,h*.64f,(game.terrainDetailRadius-40f)/260f);
                 text(c,"Terreno próximo: "+game.renderDistance+" m",w*.5f,h*.735f,11,0xFFEAF0F3,false);
-                text(c,"Árvores LOD até o horizonte selecionado",w*.5f,h*.795f,10,0xFFBBCBD4,false);
+                drawCheck(c,w*.30f,h*.819f,game.softPixelOn);
+                text(c,"Pixelização sutil (1,35 px)",w*.555f,h*.832f,11,0xFFBBCBD4,false);
             }
             rounded(c,w*.435f,h*.873f,w*.565f,h*.943f,8,0xFFF2BD7D);
             text(c,"VOLTAR",w*.5f,h*.924f,12,0xFF193344,true);
@@ -166,20 +208,19 @@ public final class GameHud extends View {
         rounded(c,px-dp(24),py-dp(17),px+dp(24),py+dp(17),9,0x82334751);
         ink(0xFFFFE5BE); c.drawRoundRect(new RectF(px-dp(7),py-dp(9),px-dp(2),py+dp(9)),2,2,p);
         c.drawRoundRect(new RectF(px+dp(3),py-dp(9),px+dp(8),py+dp(9)),2,2,p);
-        // Solas v0.4: 1 hotbar de acesso rapido; sete slots dentro da mochila.
+        // Dois slots de maos sempre visiveis, com selecao visual independente.
         float sz=dp(55),hotY=h-dp(43);
-        rounded(c,w*.5f-sz*.5f,hotY-sz*.5f,w*.5f+sz*.5f,hotY+sz*.5f,7,0xC3182435);
-        ring(c,w*.5f,hotY,sz*.54f,0xB6FFF0C3,1.4f);
-        if(game.selectedSlot==0){
-            if(slotSword!=null)drawSprite(c,slotSword,w*.5f,hotY,dp(44));
-            else text(c,"1",w*.5f,hotY+dp(10),24,0xFFFFFFFF,true);
+        for(int hand=0;hand<2;hand++){
+            float hx=handX(w,sz,hand);
+            rounded(c,hx-sz*.49f,hotY-sz*.49f,hx+sz*.49f,hotY+sz*.49f,7,
+                    game.selectedSlot==hand?0xE45B4D38:0xC3182435);
+            ring(c,hx,hotY,sz*.49f,game.selectedSlot==hand?0xFFFFD88B:0x8897B4BD,1.6f);
+            drawItem(c,game.itemAt(10+hand),hx,hotY,dp(43));
+            text(c,hand==0?"E":"D",hx+sz*.30f,hotY-sz*.27f,9,0xFFEEE3CD,true);
         }
-        else text(c,"-",w*.5f,hotY+dp(10),24,0x99FFFFFF,false);
         float bagX=w-dp(41),bagY=dp(42);
-        rounded(c,bagX-dp(34),bagY-dp(33),bagX+dp(34),bagY+dp(33),8,0xC1142330);
-        if(backpack!=null)drawSprite(c,backpack,bagX,bagY,dp(52));
-        else text(c,"BAG",bagX,bagY+dp(5),15,0xFFFFFFFF,true);
-        if(game.selectedSlot==0){
+        drawBackpackButton(c,bagX,bagY);
+        if(game.hasSwordEquipped()){
             float ax=w-dp(103),ay=h-dp(216);
             boolean glowing=game.renderer.swordActive();
             rounded(c,ax-dp(40),ay-dp(40),ax+dp(40),ay+dp(40),10,
@@ -189,19 +230,33 @@ public final class GameHud extends View {
             else text(c,"LUZ",ax,ay+dp(5),15,0xFFFFFFFF,true);
         }
         if(inventoryOpen){
-            ink(0xC70B111C);c.drawRect(0,0,w,h,p);
-            float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);
-            rounded(c,left-dp(17),top-dp(52),left+dp(4*82+17),top+dp(2*82+20),13,0xF0202938);
-            text(c,"MOCHILA   7 SLOTS",w*.5f,top-dp(17),18,0xFFF4EDDC,true);
-            for(int i=0;i<7;i++){
-                int row=i/4,col=i%4;
-                float cx=left+col*cell+cell*.5f,cy=top+row*cell+cell*.5f;
-                rounded(c,cx-cell*.43f,cy-cell*.43f,cx+cell*.43f,cy+cell*.43f,7,
-                        i==game.selectedSlot?0xCC6C5B38:0xCC111D2B);
-                ring(c,cx,cy,cell*.42f,i==game.selectedSlot?0xFFFFDA8A:0x889CB2BC,1.1f);
-                if(i==0 && slotSword!=null)drawSprite(c,slotSword,cx,cy,dp(50));
+            ink(0xD10B111C);c.drawRect(0,0,w,h,p);
+            float cell=inventoryCell(w),left=inventoryLeft(w,cell),top=inventoryTop(h,cell);
+            rounded(c,left-dp(14),top-cell*.63f,left+5*cell+dp(14),top+3.58f*cell,12,0xF0202938);
+            text(c,"MOCHILA  10 SLOTS",w*.5f,top-cell*.27f,16,0xFFF4EDDC,true);
+            for(int i=0;i<InventorySlots.BAG_COUNT;i++){
+                float cx=left+(i%5+.5f)*cell,cy=top+(i/5+.5f)*cell;
+                boolean selected=i==pendingSlot;
+                rounded(c,cx-cell*.43f,cy-cell*.43f,cx+cell*.43f,cy+cell*.43f,6,
+                        selected?0xFFF5CD78:0xDD111D2B);
+                ring(c,cx,cy,cell*.42f,selected?0xFFFFF1B5:0x889CB2BC,1.2f);
+                drawItem(c,game.itemAt(i),cx,cy,cell*.69f);
             }
-            text(c,"TOQUE EM UM SLOT  •  MOCHILA PARA FECHAR",w*.5f,top+dp(2*82+8),10,0xFFE1E7E5,false);
+            text(c,"MÃOS",w*.5f,top+2.20f*cell,12,0xFFE5D5B4,true);
+            for(int hand=0;hand<2;hand++){
+                int slot=10+hand;
+                float hx=handX(w,cell,hand),hy=top+2.83f*cell;
+                boolean selected=slot==pendingSlot;
+                rounded(c,hx-cell*.43f,hy-cell*.43f,hx+cell*.43f,hy+cell*.43f,6,
+                        selected?0xFFF5CD78:0xDD2A3843);
+                ring(c,hx,hy,cell*.42f,selected?0xFFFFF1B5:0xFFA7B9C4,1.5f);
+                drawItem(c,game.itemAt(slot),hx,hy,cell*.72f);
+                text(c,hand==0?"ESQUERDA":"DIREITA",hx,hy+cell*.62f,9,0xFFD8E3E8,true);
+            }
+            text(c,pendingSlot<0?"SELECIONE UM ITEM PARA MOVER":
+                    "SELECIONE O DESTINO OU TOQUE NOVAMENTE",w*.5f,top+3.45f*cell,
+                    9,0xFFF4DFC1,false);
+            drawBackpackButton(c,bagX,bagY); // permanece acessivel por cima da janela
         }
         if(game.renderer.swordActive())postInvalidateDelayed(120);
         // Mira sutil no centro da tela.
@@ -276,24 +331,38 @@ public final class GameHud extends View {
                 }else{
                     if(Math.abs(y-h*.45f)<h*.045f){sliderId=id;sliderWhich=9;applySlider(x,w,9);}
                     else if(Math.abs(y-h*.64f)<h*.045f){sliderId=id;sliderWhich=10;applySlider(x,w,10);}
+                    else if(within(x,y,w*.435f,h*.819f,w*.22f,h*.034f))game.setSoftPixelOn(!game.softPixelOn);
                 }
             } else if(inventoryOpen && game.state==1){
-                float left=w*.5f-dp(202),top=h*.5f-dp(115),cell=dp(82);
-                if(within(x,y,w-dp(41),dp(42),dp(41),dp(41))){inventoryOpen=false;}
-                else {
-                    int col=(int)((x-left)/cell),row=(int)((y-top)/cell),slot=row*4+col;
-                    if(x>=left&&y>=top&&col>=0&&col<4&&row>=0&&row<2&&slot<7){
-                        game.selectedSlot=slot;inventoryOpen=false;
-                        game.renderer.swordAction(false);
+                if(within(x,y,w-dp(41),dp(42),dp(41),dp(41))){
+                    inventoryOpen=false;pendingSlot=-1;
+                    bagPressUntil=SystemClock.uptimeMillis()+170L;
+                }else{
+                    int slot=inventoryHit(x,y,w,h);
+                    if(slot>=0){
+                        if(pendingSlot<0){
+                            if(game.itemAt(slot)!=InventorySlots.EMPTY)pendingSlot=slot;
+                        }else if(pendingSlot==slot){pendingSlot=-1;}
+                        else{
+                            game.swapInventorySlots(pendingSlot,slot);
+                            pendingSlot=-1;
+                        }
                     }
                 }
             } else if(game.state==1 && within(x,y,w-dp(41),dp(42),dp(41),dp(41))){
-                inventoryOpen=true;game.renderer.move(0,0);
+                inventoryOpen=true;pendingSlot=-1;
+                bagPressUntil=SystemClock.uptimeMillis()+170L;
+                game.renderer.move(0,0);
                 stickX=stickY=0;moveId=lookId=jumpId=actionId=-1;
                 game.renderer.swordAction(false);
-            } else if(game.state==1 && game.selectedSlot==0 &&
+            } else if(game.state==1 && game.hasSwordEquipped() &&
                       within(x,y,w-dp(103),h-dp(216),dp(44),dp(45))){
-                actionId=id;game.renderer.swordAction(true);
+                actionId=id;game.renderer.swordAction(true);game.playSwordSound();
+            } else if(game.state==1 &&
+                      (within(x,y,handX(w,dp(55),0),h-dp(43),dp(29),dp(29)) ||
+                       within(x,y,handX(w,dp(55),1),h-dp(43),dp(29),dp(29)))){
+                game.selectedSlot=within(x,y,handX(w,dp(55),0),h-dp(43),dp(29),dp(29))?0:1;
+                game.renderer.swordAction(false);
             } else if(within(x,y,w/2,dp(28),dp(35),dp(29))) {
                 game.pause();
             } else if(x < w*.35f && y>h*.38f && moveId<0) {
