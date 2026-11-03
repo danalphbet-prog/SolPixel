@@ -411,21 +411,51 @@ final class Shaders {
         out vec2 vUv;
         out vec3 vNormal;
         void main(){
-            float angle=atan(.700,.714)*.80; // 20% mais vertical
-            float cs=cos(angle),sn=sin(angle);
-            vec3 p=aPos*1.357; // +15% sobre 1.18
-            vec3 blade=vec3(p.x*cs-p.y*sn,p.x*sn+p.y*cs,p.z);
-            // Rotação de golpe da direita para esquerda, ao redor do punho.
-            vec2 pivot=vec2(.03,-.10);
-            float swing=-1.10*uSwing;
-            float ca=cos(swing),sa=sin(swing);
-            vec2 off=blade.xy-pivot;
-            blade.xy=vec2(off.x*ca-off.y*sa,off.x*sa+off.y*ca)+pivot;
+            // SOLAS_SWORD_HILT_PIVOT_V059
+            // uSwing e a amplitude de ida/volta, entre 0 e 1.
+            float t=clamp(uSwing,0.0,1.0);
+            float baseAngle=atan(.700,.714)*.80;
+            float ca=cos(baseAngle),sa=sin(baseAngle);
+            float scale=1.357;
+            vec3 blade=vec3((aPos.x*ca-aPos.y*sa)*scale,
+                            (aPos.x*sa+aPos.y*ca)*scale,
+                            aPos.z*scale);
+            vec3 norm=vec3(aNormal.x*ca-aNormal.y*sa,
+                           aNormal.x*sa+aNormal.y*ca,aNormal.z);
+            // Punho proximo da mao: Y local=-0.26, depois da rotacao base.
+            // O punho permanece no mesmo Y/Z durante todo o ataque.
+            vec3 grip=vec3(sa*.26*scale,-ca*.26*scale,0.0);
+            vec3 arm=blade-grip;
+
+            // 45 graus para a frente: somente a lamina aprofunda em -Z.
+            float pitch=-.78539816339*t;
+            float cp=cos(pitch),sp=sin(pitch);
+            arm.yz=vec2(arm.y*cp-arm.z*sp,arm.y*sp+arm.z*cp);
+            norm.yz=vec2(norm.y*cp-norm.z*sp,norm.y*sp+norm.z*cp);
+
+            // Alinhamento final da lamina a 90 graus para a esquerda
+            // em relacao ao eixo vertical da tela (descontada a pose base).
+            float roll=(1.57079632679-baseAngle)*t;
+            float cr=cos(roll),sr=sin(roll);
+            arm.xy=vec2(arm.x*cr-arm.y*sr,arm.x*sr+arm.y*cr);
+            norm.xy=vec2(norm.x*cr-norm.y*sr,norm.x*sr+norm.y*cr);
+
+            // Pequena varredura em yaw, ainda ao redor do punho,
+            // aproxima a ponta da lateral esquerda sem transladar a mao em Z.
+            float yaw=.3490658504*t;
+            float cy=cos(yaw),sy=sin(yaw);
+            arm.xz=vec2(arm.x*cy+arm.z*sy,-arm.x*sy+arm.z*cy);
+            norm.xz=vec2(norm.x*cy+norm.z*sy,-norm.x*sy+norm.z*cy);
+
+            // O punho sai da direita e chega ao CENTRO horizontal (X=0).
+            // Sem avanco/recuo do punho em profundidade; Y tambem inalterado.
             float sway=sin(uTime*3.0)*.018*uWalk+sin(uTime*1.25)*.005;
-            blade+=vec3(1.29+sway,-.895+cos(uTime*2.5)*.012*uWalk,-1.70);
+            vec3 gripMotion=vec3(1.29-(1.29+grip.x)*t+sway,
+                                -.895+cos(uTime*2.5)*.012*uWalk,-1.70);
+            blade=grip+arm+gripMotion;
             gl_Position=uProjection*vec4(blade,1.0);
             vUv=aUv;
-            vNormal=normalize(vec3(aNormal.x*cs-aNormal.y*sn,aNormal.x*sn+aNormal.y*cs,aNormal.z));
+            vNormal=normalize(norm);
         }
         """;
     static final String SWORD_F = """

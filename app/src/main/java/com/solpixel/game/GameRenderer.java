@@ -206,7 +206,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
-        if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.46f)swordSwingTime=-1f;}
+        if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.64f)swordSwingTime=-1f;}
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
         CelestialCycle.sunDirection(celestialTime,SUN);
         eclipse=CelestialCycle.eclipse(celestialTime);
@@ -659,20 +659,41 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     }
     private float attackProgress(){
         if(swordSwingTime<0f)return 0f;
-        float t=Math.max(0f,Math.min(1f,swordSwingTime/.46f));
-        return (float)Math.sin(Math.PI*t);
+        // Avanco em 0.27s, recuperacao em 0.37s (total 0.64s).
+        float t=Math.max(0f,Math.min(1f,swordSwingTime/.64f));
+        float p=t<.42f?t/.42f:(t-.42f)/.58f;
+        p=Math.max(0f,Math.min(1f,p));
+        float ease=p*p*(3f-2f*p);
+        return t<.42f?ease:1f-ease;
     }
     private void updateSwordTip(){
-        // As coordenadas aqui correspondem exatamente à transformação em SWORD_V.
-        float s=1.225f*1.357f;
-        float angle=(float)Math.atan2(.700,.714)*.80f;
-        float px=-(float)Math.sin(angle)*s,py=(float)Math.cos(angle)*s;
-        float swing=-1.10f*attackProgress();
-        float cs=(float)Math.cos(swing),sn=(float)Math.sin(swing);
-        float tx=px-.03f,ty=py+.10f;
-        float xScreen=cs*tx-sn*ty+.03f+1.29f;
-        float yScreen=sn*tx+cs*ty-.10f-.895f;
-        float[] tip={xScreen,yScreen,-1.70f,1f};
+        // Mesma ordem de operacoes de SWORD_V: base > pitch > roll > yaw > punho.
+        float t=attackProgress();
+        float baseAngle=(float)Math.atan2(.700,.714)*.80f;
+        float ca=(float)Math.cos(baseAngle),sa=(float)Math.sin(baseAngle);
+        float scale=1.357f;
+        float tipLocalY=1.225f;
+        float bx=-tipLocalY*sa*scale;
+        float by=tipLocalY*ca*scale;
+        float bz=0f;
+        float gripX=sa*.26f*scale;
+        float gripY=-ca*.26f*scale;
+        float ax=bx-gripX,ay=by-gripY,az=bz;
+        float pitch=-(float)(Math.PI/4.0)*t;
+        float cp=(float)Math.cos(pitch),sp=(float)Math.sin(pitch);
+        float ay2=ay*cp-az*sp;
+        float az2=ay*sp+az*cp;
+        float roll=((float)(Math.PI/2.0)-baseAngle)*t;
+        float cr=(float)Math.cos(roll),sr=(float)Math.sin(roll);
+        float ax2=ax*cr-ay2*sr;
+        float ay3=ax*sr+ay2*cr;
+        float yaw=(float)Math.toRadians(20.0)*t;
+        float cy=(float)Math.cos(yaw),sy=(float)Math.sin(yaw);
+        float ax3=ax2*cy+az2*sy;
+        float az3=-ax2*sy+az2*cy;
+        float[] tip={gripX+ax3+1.29f-(1.29f+gripX)*t,
+                     gripY+ay3-.895f,
+                     az3-1.70f,1f};
         float[] clip=new float[4];
         Matrix.multiplyMV(clip,0,proj,0,tip,0);
         if(clip[3]>.001f){
