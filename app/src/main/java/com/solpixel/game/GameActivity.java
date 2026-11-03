@@ -11,12 +11,14 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-public final class GameActivity extends Activity { // SOLAS_INVENTORY_AUDIO_RAYS_PATCH_01
+public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRAIN_V058
     // 0 = menu, 1 = jogando, 2 = pausa, 3 = configuracoes
     volatile int state = 0;
     volatile int selectedSlot=0; // mao selecionada (0=esquerda, 1=direita)
     final InventorySlots inventory=new InventorySlots();
     volatile boolean softPixelOn=true;
+    volatile boolean filmGrainOn=true;
+    FilmGrainOverlay filmOverlay;
     GameRenderer renderer;
     GameHud hud;
     GLSurfaceView surface;
@@ -51,6 +53,7 @@ public final class GameActivity extends Activity { // SOLAS_INVENTORY_AUDIO_RAYS
         preferences=getSharedPreferences("SolPixelSettings",MODE_PRIVATE);
         inventory.restore(preferences.getString("solasInventory12", ""));
         softPixelOn=preferences.getBoolean("softPixelOn",true);
+        filmGrainOn=preferences.getBoolean("filmGrainOn",true);
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
         cloudsOn=preferences.getBoolean("clouds",true);
@@ -104,6 +107,8 @@ public final class GameActivity extends Activity { // SOLAS_INVENTORY_AUDIO_RAYS
         FrameLayout root = new FrameLayout(this);
         root.addView(surface, new FrameLayout.LayoutParams(-1,-1));
         root.addView(hud, new FrameLayout.LayoutParams(-1,-1));
+        filmOverlay=new FilmGrainOverlay(this);
+        root.addView(filmOverlay,new FrameLayout.LayoutParams(-1,-1));
         setContentView(root);
     }
     void immersive() {
@@ -115,6 +120,19 @@ public final class GameActivity extends Activity { // SOLAS_INVENTORY_AUDIO_RAYS
     // Inventario de 12 posicoes: os indices 10/11 sao as duas maos.
     int itemAt(int position){return inventory.itemAt(position);}
     boolean hasSwordEquipped(){return inventory.isSwordInHand(selectedSlot);}
+    void setFilmGrainOn(boolean enabled){
+        filmGrainOn=enabled;
+        preferences.edit().putBoolean("filmGrainOn",enabled).apply();
+        if(filmOverlay!=null)filmOverlay.postInvalidate();
+        hud.postInvalidate();
+    }
+    boolean emptyHand(){return inventory.isEmptyHand(selectedSlot);}
+    boolean logsInHand(){return inventory.isLogInHand(selectedSlot);}
+    int stackAt(int index){return inventory.countAt(index);}
+    void storeInventory(){
+        preferences.edit().putString("solasInventory12",inventory.save()).apply();
+        if(hud!=null)hud.postInvalidate();
+    }
     void setSoftPixelOn(boolean enabled){
         softPixelOn=enabled;
         preferences.edit().putBoolean("softPixelOn",enabled).apply();

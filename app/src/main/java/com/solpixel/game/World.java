@@ -565,6 +565,7 @@ public final class World {
             Tree[] local=decoration.collisionCells.get(cellKey(xx,zz));
             if(local==null)continue;
             for(Tree t:local){
+                if(t.kind==PINE && TreeHarvestHooks.isFelled(t.x,t.z))continue;
                 float dx=px-t.x,dz=pz-t.z,ds=dx*dx+dz*dz;
                 if(ds>64f)continue;
                 for(int i=0;i<6;i++)if(ds<distances[i]){

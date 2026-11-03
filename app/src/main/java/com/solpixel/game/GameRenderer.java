@@ -79,6 +79,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private int treeP,cloudP,cloudMask;
     private CloudModel clouds;
     private ForestShadows forestShadows;
+    private PineHarvestSystem pineHarvest;
+    private volatile int inventoryCommand=0;
     private TerrainShadowBake terrainShadowBake;
     private float forestNear=0f;
     private int vegetationFrame=0;
@@ -124,6 +126,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
 
     void move(float vx,float vy){stickX=vx;stickY=vy;}
     void jump(){jumpPressed=true;}
+    // 1=collect one, 2=collect all, 3=drop one, 4=drop stack
+    void inventoryInteract(boolean all,boolean drop){inventoryCommand=drop?(all?4:3):(all?2:1);}
     void swordAction(boolean active){
         if(active && !swordButtonHeld && game.hasSwordEquipped()){
             swordSwingTime=0f;
@@ -188,6 +192,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             pines=new TreeModel(context,"arvore-2.glb");
             treeLods=new TreeLodRenderer(context,broadleaf,pines,game);
         } catch(Exception ex){Log.e("SolPixel","Falha carregando arvores/LODs GLB",ex);}
+        try{
+            pineHarvest=new PineHarvestSystem(context);
+            TreeHarvestHooks.register(pineHarvest);
+        }catch(Exception ex){Log.w("Solas","Modelos de troncos nao carregados",ex);pineHarvest=null;TreeHarvestHooks.register(null);}
         try{macieiras=new MacieiraRenderer(context);}
         catch(Throwable ex){Log.e("Solas","Modelos de macieiras indisponiveis",ex);macieiras=null;}
         makeDust();
@@ -212,6 +220,19 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         long now=System.nanoTime();
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
+        if(pineHarvest!=null){
+            pineHarvest.tick(time,dt);
+            int command=inventoryCommand;inventoryCommand=0;
+            if(command!=0 && game.state==1){
+                int changed=0;
+                if(command<=2 && game.emptyHand())
+                    changed=pineHarvest.pickUp(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw),game.inventory,command==2);
+                else if(command>=3 && game.logsInHand())
+                    changed=pineHarvest.dropFromHand(game.inventory,game.selectedSlot,command==4,
+                                  x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw));
+                if(changed>0)game.storeInventory();
+            }
+        }
         if(treeHitRequested){
             treeHitRequested=false;
             TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw));
@@ -248,6 +269,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 ground=nextGround;objects=nextObjects;shadows=nextShadows;
                 farGround=nextFarGround;farWorld=queuedWorld.far;
                 activeDecoration=queuedWorld.decoration;
+                if(pineHarvest!=null)pineHarvest.attach(activeDecoration);
                 if(terrainShadowBake!=null)terrainShadowBake.upload(queuedWorld.terrainShadows);
                 activeMacieiras=queuedWorld.macieiraPlacements;
                 rockIndex=rockCollision==null?null:rockCollision.index(activeDecoration.rockInstances);
@@ -522,6 +544,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             applySwordLight(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
+            f1(treeP,"uHarvestFall",0f);
+            f1(treeP,"uHarvestFade",0f);
+            float[] pulse=pineHarvest==null?new float[]{0f,0f,0f,0f}:pineHarvest.pulse();
+            GLES30.glUniform4fv(loc(treeP,"uHarvestPulse"),1,pulse,0);
             if(treeLods!=null){
                 treeLods.draw(treeP,activeDecoration.broadleafInstances,activeDecoration.pineInstances,
                     farWorld==null?null:farWorld.normalTrees,
@@ -530,6 +556,12 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             } else {
                 broadleaf.drawCulled(treeP,activeDecoration.broadleafInstances,x,z,forward[0],forward[2],game.renderDistance);
                 pines.drawCulled(treeP,activeDecoration.pineInstances,x,z,forward[0],forward[2],game.renderDistance);
+            }
+            GLES30.glUniform4f(loc(treeP,"uHarvestPulse"),0f,0f,0f,0f);
+            if(pineHarvest!=null){
+                pineHarvest.draw(treeP,pines,x,z);
+                if(game.state==1 && game.logsInHand())
+                    pineHarvest.drawHeld(treeP,x,eyeY,z,forward,right,up,yaw);
             }
         }
         // Macieiras gigantes: 3 formas / 4 LODs (ate 4000m).
@@ -749,6 +781,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 if(dx*dx+dz*dz>64f)continue;
                 float trunkHeight=tree.kind==World.PINE?3.4f:2.2f;
                 float centerY=World.height(tree.x,tree.z)+trunkHeight*.5f;
+                if(TreeHarvestHooks.isFelled(tree.x,tree.z))continue;
                 insertSwordOccluder(tree.x,centerY,tree.z,
                     Math.max(.35f,Math.min(1.75f,tree.radius*.75f)));
             }

@@ -19,6 +19,9 @@ public final class GameHud extends View {
     private boolean inventoryOpen=false;
     private int pendingSlot=-1;
     private long bagPressUntil=0L;
+    private long actionPressAt=0L,lastPickupTapAt=-10000L;
+    private boolean doublePickupHold=false;
+    private int interactionKind=0; // 1 collect, 2 drop
     private int actionId=-1;
     private static final int[] SLOT_BORDER={0xFFF8E6C0,0xFFA9B6AF};
     private int moveId = -1, lookId = -1, jumpId = -1;
@@ -48,7 +51,7 @@ public final class GameHud extends View {
     private float dp(float v) { return v*density; }
     void resetControls() {
         moveId=lookId=jumpId=sliderId=-1; stickX=stickY=0;
-        inventoryOpen=false;pendingSlot=-1;actionId=-1;game.renderer.swordAction(false);
+        inventoryOpen=false;pendingSlot=-1;actionId=-1;interactionKind=0;game.renderer.swordAction(false);
         game.renderer.move(0,0);
     }
     private void ink(int color) { p.setColor(color); p.setStyle(Paint.Style.FILL); p.setStrokeWidth(dp(2)); }
@@ -72,6 +75,11 @@ public final class GameHud extends View {
         if(item==InventorySlots.SWORD){
             if(slotSword!=null)drawSprite(c,slotSword,cx,cy,size);
             else text(c,"ESPADA",cx,cy+dp(5),9,0xFFF2E1B3,true);
+        }else if(item==InventorySlots.LOG){
+            float k=size/48f;
+            rounded(c,cx-15*k,cy-10*k,cx+15*k,cy+10*k,3,0xFF8D593C);
+            rounded(c,cx+7*k,cy-10*k,cx+16*k,cy+10*k,4,0xFFDAB083);
+            rounded(c,cx+10*k,cy-6*k,cx+14*k,cy+6*k,3,0xFF986E49);
         }else if(item==InventorySlots.TORCH){
             // Icone de tocha em pixel-art sem depender de um modelo 3D inexistente.
             float k=size/48f;
@@ -79,6 +87,10 @@ public final class GameHud extends View {
             rounded(c,cx-7*k,cy-17*k,cx+7*k,cy-3*k,2,0xFFFFA137);
             rounded(c,cx-4*k,cy-22*k,cx+4*k,cy-8*k,2,0xFFFFE6A0);
         }
+    }
+    private void drawStack(Canvas c,int index,float cx,float cy,float size){
+        int count=game.stackAt(index);
+        if(count>1)text(c,String.valueOf(count),cx+size*.31f,cy+size*.34f,12,0xFFFFEEC5,true);
     }
     private void drawBackpackButton(Canvas c,float x,float y){
         boolean pressed=SystemClock.uptimeMillis()<bagPressUntil;
@@ -184,9 +196,11 @@ public final class GameHud extends View {
                 drawSlider(c,w*.28f,w*.72f,h*.45f,(game.viewDistance-1000f)/3000f);
                 text(c,"RELEVO REFINADO  "+game.terrainDetailRadius+" m",w*.5f,h*.575f,13,0xFFF9E3BE,true);
                 drawSlider(c,w*.28f,w*.72f,h*.64f,(game.terrainDetailRadius-40f)/260f);
-                text(c,"Terreno próximo: "+game.renderDistance+" m",w*.5f,h*.735f,11,0xFFEAF0F3,false);
+                text(c,"Terreno próximo: "+game.renderDistance+" m",w*.5f,h*.701f,11,0xFFEAF0F3,false);
                 drawCheck(c,w*.30f,h*.819f,game.softPixelOn);
                 text(c,"Pixelização sutil (1,35 px)",w*.555f,h*.832f,11,0xFFBBCBD4,false);
+                drawCheck(c,w*.30f,h*.765f,game.filmGrainOn);
+                text(c,"Film grain na tela inteira",w*.555f,h*.778f,11,0xFFBBCBD4,false);
             }
             rounded(c,w*.435f,h*.873f,w*.565f,h*.943f,8,0xFFF2BD7D);
             text(c,"VOLTAR",w*.5f,h*.924f,12,0xFF193344,true);
@@ -216,18 +230,19 @@ public final class GameHud extends View {
                     game.selectedSlot==hand?0xE45B4D38:0xC3182435);
             ring(c,hx,hotY,sz*.49f,game.selectedSlot==hand?0xFFFFD88B:0x8897B4BD,1.6f);
             drawItem(c,game.itemAt(10+hand),hx,hotY,dp(43));
+            drawStack(c,10+hand,hx,hotY,dp(43));
             text(c,hand==0?"E":"D",hx+sz*.30f,hotY-sz*.27f,9,0xFFEEE3CD,true);
         }
         float bagX=w-dp(41),bagY=dp(42);
         drawBackpackButton(c,bagX,bagY);
-        if(game.hasSwordEquipped()){
+        {
             float ax=w-dp(103),ay=h-dp(216);
             boolean glowing=game.renderer.swordActive();
             rounded(c,ax-dp(40),ay-dp(40),ax+dp(40),ay+dp(40),10,
                     glowing?0xDA555C69:0xB9142330);
             if(glowing) ring(c,ax,ay,dp(42),0xFFFFFFFF,2.5f);
-            if(actionIcon!=null)drawSprite(c,actionIcon,ax,ay,dp(64));
-            else text(c,"LUZ",ax,ay+dp(5),15,0xFFFFFFFF,true);
+            if(game.hasSwordEquipped() && actionIcon!=null)drawSprite(c,actionIcon,ax,ay,dp(64));
+            else text(c,game.logsInHand()?"SOLTAR":game.emptyHand()?"PEGAR":"USAR",ax,ay+dp(5),13,0xFFFFFFFF,true);
         }
         if(inventoryOpen){
             ink(0xD10B111C);c.drawRect(0,0,w,h,p);
@@ -241,6 +256,7 @@ public final class GameHud extends View {
                         selected?0xFFF5CD78:0xDD111D2B);
                 ring(c,cx,cy,cell*.42f,selected?0xFFFFF1B5:0x889CB2BC,1.2f);
                 drawItem(c,game.itemAt(i),cx,cy,cell*.69f);
+                drawStack(c,i,cx,cy,cell*.69f);
             }
             text(c,"MÃOS",w*.5f,top+2.20f*cell,12,0xFFE5D5B4,true);
             for(int hand=0;hand<2;hand++){
@@ -251,6 +267,7 @@ public final class GameHud extends View {
                         selected?0xFFF5CD78:0xDD2A3843);
                 ring(c,hx,hy,cell*.42f,selected?0xFFFFF1B5:0xFFA7B9C4,1.5f);
                 drawItem(c,game.itemAt(slot),hx,hy,cell*.72f);
+                drawStack(c,slot,hx,hy,cell*.72f);
                 text(c,hand==0?"ESQUERDA":"DIREITA",hx,hy+cell*.62f,9,0xFFD8E3E8,true);
             }
             text(c,pendingSlot<0?"SELECIONE UM ITEM PARA MOVER":
@@ -332,6 +349,7 @@ public final class GameHud extends View {
                     if(Math.abs(y-h*.45f)<h*.045f){sliderId=id;sliderWhich=9;applySlider(x,w,9);}
                     else if(Math.abs(y-h*.64f)<h*.045f){sliderId=id;sliderWhich=10;applySlider(x,w,10);}
                     else if(within(x,y,w*.435f,h*.819f,w*.22f,h*.034f))game.setSoftPixelOn(!game.softPixelOn);
+                    else if(within(x,y,w*.435f,h*.765f,w*.22f,h*.030f))game.setFilmGrainOn(!game.filmGrainOn);
                 }
             } else if(inventoryOpen && game.state==1){
                 if(within(x,y,w-dp(41),dp(42),dp(41),dp(41))){
@@ -355,9 +373,18 @@ public final class GameHud extends View {
                 game.renderer.move(0,0);
                 stickX=stickY=0;moveId=lookId=jumpId=actionId=-1;
                 game.renderer.swordAction(false);
-            } else if(game.state==1 && game.hasSwordEquipped() &&
+            } else if(game.state==1 &&
                       within(x,y,w-dp(103),h-dp(216),dp(44),dp(45))){
-                actionId=id;game.renderer.swordAction(true);game.playSwordSound();
+                actionId=id;
+                interactionKind=0;
+                if(game.hasSwordEquipped()){
+                    game.renderer.swordAction(true);game.playSwordSound();
+                }else if(game.emptyHand()||game.logsInHand()){
+                    interactionKind=game.emptyHand()?1:2;
+                    actionPressAt=SystemClock.uptimeMillis();
+                    doublePickupHold=interactionKind==1 &&
+                        actionPressAt-lastPickupTapAt<=360L;
+                }
             } else if(game.state==1 &&
                       (within(x,y,handX(w,dp(55),0),h-dp(43),dp(29),dp(29)) ||
                        within(x,y,handX(w,dp(55),1),h-dp(43),dp(29),dp(29)))){
@@ -390,7 +417,19 @@ public final class GameHud extends View {
             if(lookId==id || action==MotionEvent.ACTION_CANCEL) lookId=-1;
             if(jumpId==id || action==MotionEvent.ACTION_CANCEL) jumpId=-1;
             if(actionId==id || action==MotionEvent.ACTION_CANCEL){
-                actionId=-1;game.renderer.swordAction(false);
+                if(actionId==id && action!=MotionEvent.ACTION_CANCEL && interactionKind!=0){
+                    long now=SystemClock.uptimeMillis();
+                    long elapsed=now-actionPressAt;
+                    if(interactionKind==1){
+                        boolean all=doublePickupHold&&elapsed>=420L;
+                        game.renderer.inventoryInteract(all,false);
+                        lastPickupTapAt=all?-10000L:now;
+                    }else if(interactionKind==2){
+                        game.renderer.inventoryInteract(elapsed>=450L,true);
+                        lastPickupTapAt=-10000L;
+                    }
+                }
+                interactionKind=0;actionId=-1;game.renderer.swordAction(false);
             }
             if(sliderId==id || action==MotionEvent.ACTION_CANCEL){sliderId=-1;sliderWhich=-1;}
         }

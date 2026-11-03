@@ -18,6 +18,8 @@ import java.nio.FloatBuffer;
 final class TreeModel {
     private final Primitive[] primitives;
     private final boolean leafSecond;
+    private boolean noLeaves=false;
+    void setNoLeaves(){noLeaves=true;}
     private final int[] textures;
     private final int instanceBuffer;
     private float[] uploadedInstances;
@@ -160,7 +162,9 @@ final class TreeModel {
         if(count>0)draw(program,java.util.Arrays.copyOf(packed,count*8));
     }
 
-    void draw(int program,float[] instances){
+    void draw(int program,float[] instances){drawParts(program,instances,false);}
+    void drawCanopy(int program,float[] instances){drawParts(program,instances,true);}
+    private void drawParts(int program,float[] instances,boolean canopyOnly){
         int count=instances.length/8;
         if(count==0)return;
         if(uploadedInstances!=instances){
@@ -172,6 +176,7 @@ final class TreeModel {
         }
         GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"uTex"),1);
         for(int i=0;i<primitives.length;i++){
+            if(canopyOnly && i!=(leafSecond?1:0))continue;
             Primitive p=primitives[i];
             GLES30.glBindVertexArray(p.vao);
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER,instanceBuffer);
@@ -182,7 +187,7 @@ final class TreeModel {
             GLES30.glActiveTexture(GLES30.GL_TEXTURE1);
             GLES30.glBindTexture(GLES30.GL_TEXTURE_2D,textures[p.material]);
             GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLeaf"),
-                i==(leafSecond?1:0)?1f:0f);
+                noLeaves?0f:(i==(leafSecond?1:0)?1f:0f));
             GLES30.glDrawElementsInstanced(GLES30.GL_TRIANGLES,p.count,GLES30.GL_UNSIGNED_INT,0,count);
         }
         GLES30.glBindVertexArray(0);

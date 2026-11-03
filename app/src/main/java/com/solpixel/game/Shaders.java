@@ -747,6 +747,8 @@ final class Shaders {
         layout(location=3) in vec4 aLocation;
         layout(location=4) in vec4 aRotation;
         uniform mat4 uMvp;
+        uniform vec4 uHarvestPulse;
+        uniform float uHarvestFall;
         uniform mat4 uLightVP;
         uniform mat4 uLightVPFar;
         uniform vec3 uEye;
@@ -768,6 +770,9 @@ final class Shaders {
             vec3 rotated=vec3(tilted.x*aRotation.x-tilted.z*aRotation.y,
                               tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
             vec3 world=aLocation.xyz+rotated;
+            if(uHarvestPulse.w>.5 && distance(aLocation.xz,uHarvestPulse.xy)<.10)
+                world.y=aLocation.y+(world.y-aLocation.y)*(1.0+.10*uHarvestPulse.z);
+            world.y-=uHarvestFall;
             float leafDistance=distance(aLocation.xz,uEye.xz);
             if(uLeaf>.5 && leafDistance<15.0){
                 float fade=1.0-smoothstep(9.0,15.0,leafDistance);
@@ -805,6 +810,7 @@ final class Shaders {
         uniform float uDrawDistance;
         uniform float uEclipse;
         uniform float uLeaf;
+        uniform float uHarvestFade;
         uniform float uSwordGlow;
         uniform vec3 uSwordLightPos;
         out vec4 outColor;
@@ -866,6 +872,8 @@ final class Shaders {
         void main(){
             vec4 tex=texture(uTex,vUv);
             if(uLeaf>.5 && tex.a<.5)discard;
+            if(uLeaf>.5 && uHarvestFade>.001 &&
+               hash(floor(gl_FragCoord.xy))<uHarvestFade)discard;
             float nl=vGouraud;
             float upward=clamp(normalize(vNormal).y*.5+.5,0.0,1.0);
             vec3 ambient=mix(vec3(.22,.20,.17),vec3(.43,.50,.57),upward);
