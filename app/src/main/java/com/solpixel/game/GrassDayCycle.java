@@ -1,6 +1,6 @@
 package com.solpixel.game;
 
-/** Um dia virtual dura 24 minutos; inicio as 07:00. Somente coloracao, sem alterar sol/fisica. */
+/** Tonalidade vegetal alinhada ao mesmo relogio celeste; inicio ao meio-dia. */
 final class GrassDayCycle {
     private static final float[] HOURS={0f,5f,7f,12f,16.5f,18.8f,21f,24f};
     private static final float[][] TINT={
@@ -14,7 +14,7 @@ final class GrassDayCycle {
         {.46f,.58f,.87f}
     };
     static void color(float seconds,float[] dest){
-        float hour=(7f+seconds/60f)%24f;
+        float hour=CelestialCycle.hourOfDay(seconds);
         int i=0;
         while(i<HOURS.length-2 && hour>HOURS[i+1])i++;
         float t=(hour-HOURS[i])/(HOURS[i+1]-HOURS[i]);

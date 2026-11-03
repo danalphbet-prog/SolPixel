@@ -841,12 +841,13 @@ final class Shaders {
             float canopy=1.-vForest*(uLeaf>.5?.30:.37);
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
 
-            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             // PointLight em tempo real com oclusão das pedras e troncos.
             color+=swordPointLight(vWorld,normalize(vNormal),tex.rgb);
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.28,uDrawDistance*.90,vDist)*.95;
             color=mix(color,vec3(.82,.92,1.0),fog);
+            // Escurecer nevoa e folhas juntas na noite/eclipse.
+            color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);

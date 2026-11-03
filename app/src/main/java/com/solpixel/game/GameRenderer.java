@@ -63,7 +63,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private TreeLodRenderer treeLods;
     private MeshGpu farGround,nextFarGround;
     private FarWorld farWorld;
-    private float eclipse=0f,celestialTime=0f;
+    private float eclipse=0f,darkness=0f,celestialTime=0f;
     private final float[] moonDir=new float[3];
     private final float[] lowCloudDiscs=new float[16];
     private int lowCloudUpdate=0;
@@ -138,7 +138,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glClearColor(.57f,.69f,.75f,1);
         meshP=program(Shaders.MESH_V,Shaders.MESH_F);
         terrainShadowBake=new TerrainShadowBake();
-        skyP=program(Shaders.FULL_V,Shaders.SKY_F);
+        skyP=program(Shaders.FULL_V,SkyAtmosphere.SKY_F);
         // Transparent points reconstructed from EXR star coordinates, NOT the EXR sky texture.
         starTexture=loadImageTexture("stars_points_2048.png");
         moonTexture=loadImageTexture("moon_128.png");
@@ -210,12 +210,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
         CelestialCycle.sunDirection(celestialTime,SUN);
         eclipse=CelestialCycle.eclipse(celestialTime);
+        darkness=Math.max(CelestialCycle.night(celestialTime),eclipse*.98f);
         // Glow final atualizado apos recalculo da orientacao da camera.
         CelestialCycle.moonDirection(celestialTime,SUN,moonDir);
         if(++lowCloudUpdate%24==0 && game.cloudsOn)
             CloudModel.fillLowCloudShadows(x,z,lowCloudDiscs);
         if(!game.cloudsOn)java.util.Arrays.fill(lowCloudDiscs,0f);
-        GrassDayCycle.color(time,grassTint);
+        GrassDayCycle.color(celestialTime,grassTint);
         float targetClouds=game.cloudsOn?1f:0f;
         cloudVisibility+=(targetClouds-cloudVisibility)*(1f-(float)Math.exp(-dt*2.7f));
         // Worker unico gera terreno SEM bloquear o frame. Os 3 buffers da GPU
@@ -308,7 +309,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         Matrix.multiplyMM(vp,0,proj,0,view,0);
         if(forestShadows!=null && activeDecoration!=null){
             try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines,
-                        game.forestShadowDistance,game.forestShadowOn);}
+                        game.forestShadowDistance,game.forestShadowOn && SUN[1]>.08f);}
             catch(Exception e){Log.w("SolPixel","Desativando sombras nesta GPU",e);forestShadows=null;}
         }
         // Estima bosque a frente, sem examinar milhares de arvores todo frame.
@@ -429,6 +430,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glUseProgram(skyP);
         v3(skyP,"uForward",forward);v3(skyP,"uRight",right);v3(skyP,"uUp",up);v3(skyP,"uSun",SUN);
         v3(skyP,"uMoonDir",moonDir);f1(skyP,"uEclipse",eclipse);
+        f1(skyP,"uNight",CelestialCycle.night(celestialTime));
+        f1(skyP,"uDitherStrength",game.graphicsPreset==0?.55f:.85f);
         f1(skyP,"uAspect",sceneW/(float)sceneH);
         f1(skyP,"uFov",(float)Math.tan(Math.toRadians(67)/2));
         f1(skyP,"uSkyTime",celestialTime);
@@ -455,7 +458,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(meshP,"uHasTerrainTextures",hasTerrainTextures?1f:0f);
         v3(meshP,"uGrassDayTint",grassTint);
         f1(meshP,"uDrawDistance",FarWorld.HORIZON);
-        f1(meshP,"uEclipse",eclipse);
+        f1(meshP,"uEclipse",darkness);
         applySwordLight(meshP);
         GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
         texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
@@ -480,7 +483,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(rockProgram,"uEye"),x,eyeY,z);
             v3(rockProgram,"uSun",SUN);
             f1(rockProgram,"uDrawDistance",FarWorld.HORIZON);
-            f1(rockProgram,"uEclipse",eclipse);
+            f1(rockProgram,"uEclipse",darkness);
             applySwordLight(rockProgram);
             if(terrainShadowBake!=null)terrainShadowBake.bind(rockProgram);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
@@ -496,7 +499,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
             f1(treeP,"uDrawDistance",FarWorld.HORIZON);
-            f1(treeP,"uEclipse",eclipse);
+            f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
@@ -518,7 +521,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(treeP,"uEye"),x,eyeY,z);
             v3(treeP,"uSun",SUN);
             f1(treeP,"uDrawDistance",FarWorld.HORIZON);
-            f1(treeP,"uEclipse",eclipse);
+            f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
@@ -531,14 +534,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUseProgram(grassP);
             GLES30.glUniformMatrix4fv(loc(grassP,"uMvp"),1,false,vp,0);
             GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
-            f1(grassP,"uEclipse",eclipse);
+            f1(grassP,"uEclipse",darkness);
             applySwordLight(grassP);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
                          time,x,z,moveVelocityX,moveVelocityZ);
         }
         // Particulas pontuais e cintilantes, so durante o eclipse e na floresta local.
-        if(fireflies!=null && activeDecoration!=null && (localForest>.29f || localWheat>.22f) && eclipse>.56f){
-            float night=Math.min(1f,Math.max(0f,(eclipse-.56f)/.35f));
+        if(fireflies!=null && activeDecoration!=null && (localForest>.29f || localWheat>.22f) && darkness>.56f){
+            float night=Math.min(1f,Math.max(0f,(darkness-.56f)/.35f));
             fireflies.draw(fireflyP,activeDecoration.fireflyInstances,vp,x,eyeY,z,time,night);
         }
         // 3 tipos OBJ; nuvens paradas acima do relevo, alpha 0.9 e aparicao progressiva.
@@ -547,7 +550,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             // Projecao perspectiva 3D: a mesma usada pelo mundo.
             GLES30.glUniformMatrix4fv(loc(cloudP,"uMvp"),1,false,vp,0);
             v3(cloudP,"uSun",SUN);
-            f1(cloudP,"uEclipse",eclipse);
+            f1(cloudP,"uEclipse",darkness);
             GLES30.glUniform3f(loc(cloudP,"uEye"),x,eyeY,z);
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
             clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
@@ -611,7 +614,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         GLES30.glUniform2f(loc(finalP,"uSunUv"),ux,uy);
         // Halo angulado: surge suavemente perto da direcao solar e das bordas da tela.
         float solar=0f;
-        if(dz>.04f && ux>-.25f && ux<1.25f && uy>-.25f && uy<1.25f){
+        if(dz>.04f && SUN[1]>.01f && ux>-.25f && ux<1.25f && uy>-.25f && uy<1.25f){
             float forwardFactor=Math.min(1f,Math.max(0f,(dz-.04f)/.23f));
             float edgeX=Math.min((ux+.25f)/.33f,(1.25f-ux)/.33f);
             float edgeY=Math.min((uy+.25f)/.33f,(1.25f-uy)/.33f);
@@ -620,7 +623,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         }
         f1(finalP,"uSunVisible",solar);
         f1(finalP,"uRayQuality",game.graphicsPreset==0?0f:1f);
-        f1(finalP,"uEclipse",eclipse);
+        f1(finalP,"uEclipse",darkness);
         updateSwordTip();
         GLES30.glUniform2f(loc(finalP,"uSwordTipUv"),swordTipUv[0],swordTipUv[1]);
         f1(finalP,"uSwordSwing",attackProgress());
