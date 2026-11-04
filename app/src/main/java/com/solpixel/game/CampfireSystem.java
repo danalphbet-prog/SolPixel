@@ -72,7 +72,9 @@ final class CampfireSystem {
     }
     private static FloatBuffer floatBuffer(float[] values){
         FloatBuffer f=ByteBuffer.allocateDirect(values.length*4).order(ByteOrder.nativeOrder()).asFloatBuffer();
-        return f.put(values).position(0);
+        f.put(values);
+        f.position(0);
+        return f;
     }
     private static int compile(int type,String source){
         int shader=GLES30.glCreateShader(type);
