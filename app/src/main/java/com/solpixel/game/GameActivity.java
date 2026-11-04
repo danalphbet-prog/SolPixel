@@ -11,7 +11,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 
-public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRAIN_V058
+public final class GameActivity extends Activity { // SOLAS_CAMPFIRE_V059
     // 0 = menu, 1 = jogando, 2 = pausa, 3 = configuracoes
     volatile int state = 0;
     volatile int selectedSlot=0; // mao selecionada (0=esquerda, 1=direita)
@@ -24,6 +24,8 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
     GLSurfaceView surface;
     private MediaPlayer ambient;
     private MediaPlayer forestAmbient;
+    private MediaPlayer fireAmbient;
+    private float fireSoundVolume=0f;
     private SoundPool swordSoundPool;
     private int swordSoundId=0;
     private volatile float forestSoundTarget=0f;
@@ -89,6 +91,13 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
             if(forestAmbient!=null){forestAmbient.setLooping(true);forestAmbient.setVolume(0f,0f);}
         }catch(Exception ignored){forestAmbient=null;}
         try {
+            fireAmbient=MediaPlayer.create(this,R.raw.campfire_loop);
+            if(fireAmbient!=null){
+                fireAmbient.setLooping(true);
+                fireAmbient.setVolume(0f,0f);
+            }
+        }catch(Exception ignored){fireAmbient=null;}
+        try {
             AudioAttributes attributes=new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
@@ -149,6 +158,25 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
         if(!hasSwordEquipped() || swordSoundPool==null || swordSoundId<=0)return;
         try{swordSoundPool.play(swordSoundId,.90f,.90f,1,0,1f);}
         catch(Exception ignored){}
+    }
+    // Audio espacial suavizado: fogo audivel apenas perto de uma fogueira acesa.
+    void updateFireAmbience(float strength){
+        final float volume=Math.max(0f,Math.min(1f,strength));
+        if(fireAmbient==null)return;
+        runOnUiThread(()->{
+            if(fireAmbient==null)return;
+            try{
+                float target=state==1?volume*.62f:0f;
+                fireSoundVolume+=(target-fireSoundVolume)*.20f;
+                if(fireSoundVolume<.008f && target<.008f){
+                    fireSoundVolume=0f;
+                    if(fireAmbient.isPlaying())fireAmbient.pause();
+                    return;
+                }
+                fireAmbient.setVolume(fireSoundVolume,fireSoundVolume);
+                if(!fireAmbient.isPlaying())fireAmbient.start();
+            }catch(IllegalStateException ignored){}
+        });
     }
     // Recebe densidade florestal do render thread; o MediaPlayer e manipulado na UI.
     void updateForestAmbience(float proximity){
@@ -298,6 +326,11 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
             if(musicOn && state!=0){if(!ambient.isPlaying())ambient.start();}
             else if(ambient.isPlaying())ambient.pause();
         }catch(IllegalStateException ignored){}
+        if(fireAmbient!=null && state!=1){
+            try{if(fireAmbient.isPlaying())fireAmbient.pause();}
+            catch(IllegalStateException ignored){}
+            fireSoundVolume=0f;
+        }
         if(forestAmbient!=null && state!=1){
             try{if(forestAmbient.isPlaying())forestAmbient.pause();}
             catch(IllegalStateException ignored){}
@@ -308,6 +341,7 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
         if (state == 1) pause();
         if(ambient!=null && ambient.isPlaying())ambient.pause();
         if(forestAmbient!=null && forestAmbient.isPlaying())forestAmbient.pause();
+        if(fireAmbient!=null && fireAmbient.isPlaying())fireAmbient.pause();
         surface.onPause(); super.onPause();
     }
     @Override protected void onResume() {
@@ -320,6 +354,7 @@ public final class GameActivity extends Activity { // SOLAS_PINE_HARVEST_FILMGRA
     @Override protected void onDestroy(){
         if(ambient!=null){ambient.release();ambient=null;}
         if(forestAmbient!=null){forestAmbient.release();forestAmbient=null;}
+        if(fireAmbient!=null){fireAmbient.release();fireAmbient=null;}
         if(swordSoundPool!=null){swordSoundPool.release();swordSoundPool=null;}
         super.onDestroy();
     }

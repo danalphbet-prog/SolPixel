@@ -221,7 +221,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
         if(pineHarvest!=null){
-            pineHarvest.tick(time,dt);
+            pineHarvest.tick(time,dt,x,z);
             int command=inventoryCommand;inventoryCommand=0;
             if(command!=0 && game.state==1){
                 int changed=0;
@@ -229,13 +229,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                     changed=pineHarvest.pickUp(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw),game.inventory,command==2);
                 else if(command>=3 && game.logsInHand())
                     changed=pineHarvest.dropFromHand(game.inventory,game.selectedSlot,command==4,
-                                  x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw));
+                                  x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw),pitch);
                 if(changed>0)game.storeInventory();
             }
         }
         if(treeHitRequested){
             treeHitRequested=false;
-            TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw));
+            TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw),swordGlowRemaining>.05f);
         }
         if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.64f)swordSwingTime=-1f;}
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo
@@ -361,6 +361,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             // Matagal: forte na floresta, suave nas bordas, silencioso na planicie distante.
             float heard=Math.max(a,Math.max(b*.68f,c*.40f));
             game.updateForestAmbience(Math.min(1f,Math.max(0f,(heard-.12f)*1.65f)));
+            game.updateFireAmbience(pineHarvest==null?0f:pineHarvest.fireSoundLevel(x,z));
         }
         drawScene(eyeY);
         bloom();
@@ -501,6 +502,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(meshP,"uDrawDistance",game.viewDistance);
         f1(meshP,"uEclipse",darkness);
         applySwordLight(meshP);
+        if(pineHarvest!=null)pineHarvest.bindFireLights(meshP);
         GLES30.glUniform4fv(loc(meshP,"uCloudDiscs[0]"),4,lowCloudDiscs,0);
         texture(6,rockTexture);i1(meshP,"uRockSurfaceTex",6);
         f1(meshP,"uHasRockSurface",rockTexture!=0?1f:0f);
@@ -526,6 +528,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(rockProgram,"uDrawDistance",game.viewDistance);
             f1(rockProgram,"uEclipse",darkness);
             applySwordLight(rockProgram);
+            if(pineHarvest!=null)pineHarvest.bindFireLights(rockProgram);
             if(terrainShadowBake!=null)terrainShadowBake.bind(rockProgram);
             texture(6,rockTexture);i1(rockProgram,"uRockTex",6);
             texture(8,cliffRockTexture);i1(rockProgram,"uCliffRockTex",8);
@@ -542,6 +545,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",game.viewDistance);
             f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
+            if(pineHarvest!=null)pineHarvest.bindFireLights(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
             f1(treeP,"uHarvestFall",0f);
@@ -574,6 +578,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             f1(treeP,"uDrawDistance",game.viewDistance);
             f1(treeP,"uEclipse",darkness);
             applySwordLight(treeP);
+            if(pineHarvest!=null)pineHarvest.bindFireLights(treeP);
             if(terrainShadowBake!=null)terrainShadowBake.bind(treeP);
             bindForestShadow(treeP);
             macieiras.draw(treeP,activeMacieiras,x,z,forward[0],forward[2],game.viewDistance);
@@ -587,6 +592,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             GLES30.glUniform3f(loc(grassP,"uEye"),x,eyeY,z);
             f1(grassP,"uEclipse",darkness);
             applySwordLight(grassP);
+            if(pineHarvest!=null)pineHarvest.bindFireLights(grassP);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
                          time,x,z,moveVelocityX,moveVelocityZ);
         }
@@ -606,6 +612,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             texture(5,cloudMask);i1(cloudP,"uCloudMask",5);
             clouds.draw(cloudP,x,eyeY,z,forward[0],forward[2],time,cloudVisibility);
         }
+        // Billboard/brasas em tela 3D, apos vegetacao e nuvens, antes da espada.
+        if(pineHarvest!=null)pineHarvest.drawFireEffects(vp,right);
         if(sword!=null && game.state==1 && game.hasSwordEquipped()){
             // HUD 3D de arma renderizado por ultimo, nao sofre oclusao pelo relevo.
             sword.draw(proj,swordGlow,time,attackProgress(),

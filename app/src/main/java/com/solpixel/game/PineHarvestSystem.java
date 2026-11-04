@@ -13,6 +13,7 @@ final class PineHarvestSystem {
     private final ArrayList<TreeState> falling=new ArrayList<>();
     private final ArrayList<LooseLog> logs=new ArrayList<>();
     private final TreeModel nearLog,farLog;
+    private CampfireSystem campfires;
     private World.Decoration decoration;
     private float[] originalPines;
     private float gameTime;
@@ -55,6 +56,11 @@ final class PineHarvestSystem {
         nearLog=new TreeModel(context,"tronco_6_lados.glb");
         farLog=new TreeModel(context,"tronco_4_lados.glb");
         nearLog.setNoLeaves();farLog.setNoLeaves();
+        try{campfires=new CampfireSystem(context);}
+        catch(Exception error){
+            android.util.Log.e("Solas","Fogueira GL nao disponivel (corte continua ativo)",error);
+            campfires=null;
+        }
     }
     private static long key(float x,float z){
         return ((long)Math.round(x*1000f)<<32) ^ (Math.round(z*1000f)&0xffffffffL);
@@ -82,7 +88,8 @@ final class PineHarvestSystem {
         }
         decoration.pineInstances=kept;
     }
-    void tick(float time,float delta){
+    void tick(float time,float delta,float playerX,float playerZ){
+        if(campfires!=null)campfires.tick(time,delta,playerX,playerZ);
         gameTime=time;
         float dt=Math.min(.045f,Math.max(0f,delta));
         for(LooseLog log:logs)log.step(dt);
@@ -90,7 +97,8 @@ final class PineHarvestSystem {
             if(time-it.next().felledAt>2.2f)it.remove();
         }
     }
-    void hit(float px,float pz,float fx,float fz){
+    void hit(float px,float pz,float fx,float fz,boolean glowing){
+        if(campfires!=null && campfires.attack(px,pz,fx,fz,glowing))return;
         if(decoration==null || decoration.trees==null)return;
         float norm=(float)Math.hypot(fx,fz);
         if(norm<.1f)return;fx/=norm;fz/=norm;
@@ -143,6 +151,10 @@ final class PineHarvestSystem {
         return new float[]{lastHit.x,lastHit.z,(float)Math.sin(Math.PI*t),1f};
     }
     int pickUp(float px,float pz,float fx,float fz,InventorySlots inventory,boolean all){
+        if(campfires!=null){
+            int taken=campfires.pickup(px,pz,fx,fz,inventory,all);
+            if(taken>0)return taken;
+        }
         if(logs.isEmpty())return 0;
         float d=(float)Math.hypot(fx,fz);
         if(d<.05f)return 0;fx/=d;fz/=d;
@@ -174,9 +186,26 @@ final class PineHarvestSystem {
         }
         return obtained;
     }
-    int dropFromHand(InventorySlots inventory,int hand,boolean all,float px,float pz,float fx,float fz){
+    private float[] groundPointAtCrosshair(float px,float pz,float fx,float fz,float pitch){
+        // Centro da tela: raycast leve contra o terreno a ate 7.5 m.
+        float horizontal=(float)Math.cos(pitch),vertical=(float)Math.sin(pitch);
+        float eye=World.height(px,pz)+1.72f;
+        for(float step=1.2f;step<=7.5f;step+=.22f){
+            float xx=px+fx*horizontal*step,zz=pz+fz*horizontal*step;
+            if(eye+vertical*step<=World.height(xx,zz)+.12f)
+                return new float[]{xx,zz};
+        }
+        return new float[]{px+fx*3.1f,pz+fz*3.1f};
+    }
+    int dropFromHand(InventorySlots inventory,int hand,boolean all,float px,float pz,float fx,float fz,float aimPitch){
         int have=inventory.countAt(InventorySlots.LEFT_HAND+hand);
         if(!inventory.isLogInHand(hand) || have<1)return 0;
+        // Segurar SOLTAR com ao menos 2 troncos monta base da fogueira (2 pecas).
+        if(all && have>=2 && campfires!=null){
+            float[] target=groundPointAtCrosshair(px,pz,fx,fz,aimPitch);
+            if(campfires.createAt(target[0],target[1],(float)Math.atan2(fx,-fz)))
+                return inventory.consumeHandLogs(hand,2);
+        }
         int n=Math.min(Math.min(all?have:1,MAX_LOOSE_LOGS-logs.size()),InventorySlots.STACK_MAX);
         if(n<=0)return 0;
         n=inventory.consumeHandLogs(hand,n);
@@ -197,7 +226,17 @@ final class PineHarvestSystem {
         float cy=py+forward[1]*1.45f+right[1]*.47f-up[1]*.43f;
         float cz=pz+forward[2]*1.45f+right[2]*.47f-up[2]*.43f;
         float[] instance={cx,cy,cz,.34f,(float)Math.cos(yaw),(float)Math.sin(yaw),.25f,.23f};
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),1f);
         nearLog.draw(program,instance);
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),0f);
+    }
+
+    void bindFireLights(int program){if(campfires!=null)campfires.bindLights(program);
+        else GLES30.glUniform1i(GLES30.glGetUniformLocation(program,"uFireCount"),0);
+    }
+    float fireSoundLevel(float px,float pz){return campfires==null?0f:campfires.audibleAt(px,pz);}
+    void drawFireEffects(float[] viewProjection,float[] cameraRight){
+        if(campfires!=null)campfires.drawEffects(viewProjection,cameraRight);
     }
 
     /** Draws original leaf canopy dropping down, and logs LOD6 near / LOD4 far. */
@@ -225,7 +264,10 @@ final class PineHarvestSystem {
             if(ds<14f*14f){log.add(near,a);a+=8;}
             else if(ds<80f*80f){log.add(far,b);b+=8;}
         }
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),1f);
         if(a>0)nearLog.draw(program,near);
         if(b>0)farLog.draw(program,far);
+        GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),0f);
+        if(campfires!=null)campfires.drawLogs(program,nearLog,farLog,eyeX,eyeZ);
     }
 }

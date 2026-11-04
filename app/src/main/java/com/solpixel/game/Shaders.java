@@ -140,7 +140,26 @@ final class Shaders {
             float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
-            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+            return albedo*vec3(2.75,2.75,2.85)*uSwordGlow*falloff*ndotl*shadow;
+        }
+        uniform int uFireCount;
+        uniform vec4 uFirePositions[4];
+        uniform float uLogMaterial;
+        vec3 campfirePointLight(vec3 point,vec3 normal,vec3 albedo){
+            // Espada: 7.5m; fogueira: 18.75m (2.5x) com luz quente.
+            vec3 result=vec3(0.0);
+            for(int i=0;i<4;i++){
+                if(i>=uFireCount)break;
+                vec3 delta=uFirePositions[i].xyz-point;
+                float dist=length(delta);
+                if(dist>18.75)continue;
+                float fade=pow(max(0.0,1.0-dist/18.75),2.0);
+                float facing=max(0.18,dot(normalize(normal),delta/max(dist,.001)));
+                // Material do tronco recebe apenas 50% para nao estourar o albedo.
+                float response=mix(1.0,.5,clamp(uLogMaterial,0.0,1.0));
+                result+=albedo*vec3(6.875,3.10,1.25)*uFirePositions[i].w*fade*facing*response;
+            }
+            return result;
         }
         void main(){
             vec3 n=normalize(vNormal);
@@ -223,6 +242,7 @@ final class Shaders {
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             // PointLight em tempo real com oclusão das pedras e troncos.
             color+=swordPointLight(vPos,n,albedo);
+            color+=campfirePointLight(vPos,n,albedo);
             float bayer=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             // 2.5-4 km: fewer color levels plus larger dither blocks.
             float farDetail=smoothstep(2500.0,4000.0,vDist);
@@ -297,7 +317,26 @@ final class Shaders {
             float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
-            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+            return albedo*vec3(2.75,2.75,2.85)*uSwordGlow*falloff*ndotl*shadow;
+        }
+        uniform int uFireCount;
+        uniform vec4 uFirePositions[4];
+        uniform float uLogMaterial;
+        vec3 campfirePointLight(vec3 point,vec3 normal,vec3 albedo){
+            // Espada: 7.5m; fogueira: 18.75m (2.5x) com luz quente.
+            vec3 result=vec3(0.0);
+            for(int i=0;i<4;i++){
+                if(i>=uFireCount)break;
+                vec3 delta=uFirePositions[i].xyz-point;
+                float dist=length(delta);
+                if(dist>18.75)continue;
+                float fade=pow(max(0.0,1.0-dist/18.75),2.0);
+                float facing=max(0.18,dot(normalize(normal),delta/max(dist,.001)));
+                // Material do tronco recebe apenas 50% para nao estourar o albedo.
+                float response=mix(1.0,.5,clamp(uLogMaterial,0.0,1.0));
+                result+=albedo*vec3(6.875,3.10,1.25)*uFirePositions[i].w*fade*facing*response;
+            }
+            return result;
         }
         void main(){
             vec3 w=pow(abs(normalize(vNormal)),vec3(4.0));w/=max(.001,w.x+w.y+w.z);
@@ -319,6 +358,7 @@ final class Shaders {
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             // PointLight em tempo real com oclusão das pedras e troncos.
             color+=swordPointLight(vWorld,normalize(vNormal),stone);
+            color+=campfirePointLight(vWorld,normalize(vNormal),stone);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -867,7 +907,26 @@ final class Shaders {
             float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
-            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+            return albedo*vec3(2.75,2.75,2.85)*uSwordGlow*falloff*ndotl*shadow;
+        }
+        uniform int uFireCount;
+        uniform vec4 uFirePositions[4];
+        uniform float uLogMaterial;
+        vec3 campfirePointLight(vec3 point,vec3 normal,vec3 albedo){
+            // Espada: 7.5m; fogueira: 18.75m (2.5x) com luz quente.
+            vec3 result=vec3(0.0);
+            for(int i=0;i<4;i++){
+                if(i>=uFireCount)break;
+                vec3 delta=uFirePositions[i].xyz-point;
+                float dist=length(delta);
+                if(dist>18.75)continue;
+                float fade=pow(max(0.0,1.0-dist/18.75),2.0);
+                float facing=max(0.18,dot(normalize(normal),delta/max(dist,.001)));
+                // Material do tronco recebe apenas 50% para nao estourar o albedo.
+                float response=mix(1.0,.5,clamp(uLogMaterial,0.0,1.0));
+                result+=albedo*vec3(6.875,3.10,1.25)*uFirePositions[i].w*fade*facing*response;
+            }
+            return result;
         }
         void main(){
             vec4 tex=texture(uTex,vUv);
@@ -885,12 +944,14 @@ final class Shaders {
             vec3 color=tex.rgb*canopy*(ambient+sunlight);
 
             // PointLight em tempo real com oclusão das pedras e troncos.
-            color+=swordPointLight(vWorld,normalize(vNormal),tex.rgb);
+            // Local emissive lights are applied after night grading.
             // solpixel-v08: nevoa tambem nas folhas GLB originais.
             float fog=smoothstep(uDrawDistance*.68,uDrawDistance*1.04,vDist)*.55;
             color=mix(color,vec3(.82,.92,1.0),fog);
             // Escurecer nevoa e folhas juntas na noite/eclipse.
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
+            color+=swordPointLight(vWorld,normalize(vNormal),tex.rgb);
+            color+=campfirePointLight(vWorld,normalize(vNormal),tex.rgb);
             float dither=mod(floor(gl_FragCoord.x)+2.0*mod(floor(gl_FragCoord.y),2.0),4.0)/4.0;
             color=floor(clamp(color,0.0,1.0)*63.0+dither*.45)/63.0;
             outColor=vec4(color,1.0);
@@ -978,7 +1039,26 @@ final class Shaders {
             float falloff=pow(max(0.0,1.0-distanceLight/7.5),2.0);
             float ndotl=max(.10,dot(normalize(normal),delta/max(distanceLight,.001)));
             float shadow=swordPointShadow(point);
-            return albedo*vec3(5.5,5.5,5.7)*uSwordGlow*falloff*ndotl*shadow;
+            return albedo*vec3(2.75,2.75,2.85)*uSwordGlow*falloff*ndotl*shadow;
+        }
+        uniform int uFireCount;
+        uniform vec4 uFirePositions[4];
+        uniform float uLogMaterial;
+        vec3 campfirePointLight(vec3 point,vec3 normal,vec3 albedo){
+            // Espada: 7.5m; fogueira: 18.75m (2.5x) com luz quente.
+            vec3 result=vec3(0.0);
+            for(int i=0;i<4;i++){
+                if(i>=uFireCount)break;
+                vec3 delta=uFirePositions[i].xyz-point;
+                float dist=length(delta);
+                if(dist>18.75)continue;
+                float fade=pow(max(0.0,1.0-dist/18.75),2.0);
+                float facing=max(0.18,dot(normalize(normal),delta/max(dist,.001)));
+                // Material do tronco recebe apenas 50% para nao estourar o albedo.
+                float response=mix(1.0,.5,clamp(uLogMaterial,0.0,1.0));
+                result+=albedo*vec3(6.875,3.10,1.25)*uFirePositions[i].w*fade*facing*response;
+            }
+            return result;
         }
         void main(){
             vec4 tex=texture(uGrassAtlas,vUv);
@@ -1000,6 +1080,7 @@ final class Shaders {
             color=mix(color,color*vec3(.095,.16,.30),uEclipse*.96);
             // PointLight em tempo real com oclusão das pedras e troncos.
             color+=swordPointLight(vWorld,vec3(0.0,1.0,0.0),tex.rgb);
+            color+=campfirePointLight(vWorld,vec3(0.0,1.0,0.0),tex.rgb);
             outColor=vec4(clamp(color,0.0,1.0),1.0);
         }
         """;
