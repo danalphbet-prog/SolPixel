@@ -97,27 +97,28 @@ final class PineHarvestSystem {
             if(time-it.next().felledAt>2.2f)it.remove();
         }
     }
-    void hit(float px,float pz,float fx,float fz,boolean glowing){
-        if(campfires!=null && campfires.attack(px,pz,fx,fz,glowing))return;
-        if(decoration==null || decoration.trees==null)return;
+    int hit(float px,float pz,float fx,float fz,boolean glowing){
+        if(campfires!=null && campfires.attack(px,pz,fx,fz,glowing))return 0;
+        if(decoration==null || decoration.trees==null)return 0;
         float norm=(float)Math.hypot(fx,fz);
-        if(norm<.1f)return;fx/=norm;fz/=norm;
+        if(norm<.1f)return 0;fx/=norm;fz/=norm;
         World.Tree target=null;
         float best=Float.POSITIVE_INFINITY;
         for(World.Tree candidate:decoration.trees){
             if(candidate.kind!=World.PINE || isFelled(candidate.x,candidate.z))continue;
             float dx=candidate.x-px,dz=candidate.z-pz;
             float distance=(float)Math.hypot(dx,dz);
-            if(distance>6.8f || distance<.20f)continue;
+            if(distance>10.5f || distance<.10f)continue;
             float ahead=dx*fx+dz*fz;
-            if(ahead<-.15f || ahead>7.0f)continue;
+            if(ahead<-Math.min(1.0f,candidate.radius*.55f) || ahead>10.5f)continue;
             float lateral=Math.abs(dx*fz-dz*fx);
-            float width=Math.max(1.28f,Math.min(2.75f,1.18f+distance*.18f+candidate.radius*.38f));
+            // Arco frontal mais tolerante: mira central OU tronco a frente.
+            float width=Math.max(1.65f,Math.min(3.7f,1.2f+distance*.33f+candidate.radius*.48f));
             if(lateral>width)continue;
-            float score=lateral*.83f+distance*.18f;
+            float score=lateral*.70f+distance*.23f;
             if(score<best){best=score;target=candidate;}
         }
-        if(target==null)return;
+        if(target==null)return 0;
         long id=key(target.x,target.z);
         TreeState s=states.get(id);
         if(s==null){
@@ -133,6 +134,7 @@ final class PineHarvestSystem {
             spawnTreeLogs(s);
             rebuildPines();
         }
+        return s.damage;
     }
     private void spawnTreeLogs(TreeState s){
         // Four to six physical pieces, diameter matches World.Tree.radius.
@@ -146,7 +148,7 @@ final class PineHarvestSystem {
     }
     float[] pulse(){
         if(lastHit==null || lastHit.felled)return new float[]{0,0,0,0};
-        float t=(gameTime-lastHit.hitTime)/.19f;
+        float t=(gameTime-lastHit.hitTime)/.26f;
         if(t<0||t>=1f)return new float[]{0,0,0,0};
         return new float[]{lastHit.x,lastHit.z,(float)Math.sin(Math.PI*t),1f};
     }

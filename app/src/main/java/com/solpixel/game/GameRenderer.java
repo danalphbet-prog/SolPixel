@@ -48,7 +48,10 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private float starsTwinkleTime=0f;
     private float swordRays=0f;
     private boolean swordRayMoon=false;
-    private volatile boolean treeHitRequested=false;
+    private final java.util.concurrent.atomic.AtomicInteger pendingTreeHits=
+        new java.util.concurrent.atomic.AtomicInteger();
+    private volatile int pineHitCount=0;
+    private volatile long pineHitDisplayUntil=0L;
     private static final float[] SUN_RAY_TINT={1.0f,.79f,.55f};
     private static final float[] MOON_RAY_TINT={.57f,.67f,.96f};
     private float swordSwingTime=-1f;
@@ -131,11 +134,14 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     void swordAction(boolean active){
         if(active && !swordButtonHeld && game.hasSwordEquipped()){
             swordSwingTime=0f;
-            treeHitRequested=true; // encaminhado no render thread sem derrubar arvores
+            pendingTreeHits.incrementAndGet(); // cada toque conta, mesmo entre frames
         }
         swordButtonHeld=active;
     }
     boolean swordActive(){return swordGlowRemaining>0f && game.hasSwordEquipped();}
+    int pineHitFeedback(){
+        return android.os.SystemClock.uptimeMillis()<pineHitDisplayUntil?pineHitCount:0;
+    }
     void reset(){resetRequested=true;}
     synchronized void look(float dx,float dy){lookDX+=dx;lookDY+=dy;}
     private synchronized float[] consumeLook(){
@@ -233,9 +239,15 @@ final class GameRenderer implements GLSurfaceView.Renderer {
                 if(changed>0)game.storeInventory();
             }
         }
-        if(treeHitRequested){
-            treeHitRequested=false;
-            TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),-(float)Math.cos(yaw),swordGlowRemaining>.05f);
+        int swingHits=pendingTreeHits.getAndSet(0);
+        for(int hitAttempt=0;hitAttempt<Math.min(8,swingHits);hitAttempt++){
+            int count=TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),
+                -(float)Math.cos(yaw),swordGlowRemaining>.05f);
+            if(count>0){
+                pineHitCount=count;
+                pineHitDisplayUntil=android.os.SystemClock.uptimeMillis()+1150L;
+                if(game.hud!=null)game.hud.postInvalidate();
+            }
         }
         if(swordSwingTime>=0f){swordSwingTime+=dt;if(swordSwingTime>.64f)swordSwingTime=-1f;}
         if(game.state==1)celestialTime+=dt; // pausa/menu nao consomem o ciclo

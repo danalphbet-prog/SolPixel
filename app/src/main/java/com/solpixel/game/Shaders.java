@@ -811,7 +811,7 @@ final class Shaders {
                               tilted.y,tilted.x*aRotation.y+tilted.z*aRotation.x);
             vec3 world=aLocation.xyz+rotated;
             if(uHarvestPulse.w>.5 && distance(aLocation.xz,uHarvestPulse.xy)<.10)
-                world.y=aLocation.y+(world.y-aLocation.y)*(1.0+.10*uHarvestPulse.z);
+                world.y=aLocation.y+(world.y-aLocation.y)*(1.0-.10*uHarvestPulse.z);
             world.y-=uHarvestFall;
             float leafDistance=distance(aLocation.xz,uEye.xz);
             if(uLeaf>.5 && leafDistance<15.0){

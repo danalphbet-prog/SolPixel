@@ -276,6 +276,15 @@ public final class GameHud extends View {
             drawBackpackButton(c,bagX,bagY); // permanece acessivel por cima da janela
         }
         if(game.renderer.swordActive())postInvalidateDelayed(120);
+        // Acerto confirmado pelo renderizador: facilita conferir os seis golpes.
+        int hits=game.renderer.pineHitFeedback();
+        if(hits>0){
+            rounded(c,w*.5f-dp(96),h*.5f-dp(82),
+                w*.5f+dp(96),h*.5f-dp(47),7,0xCB192A30);
+            text(c,hits>=6?"PINHEIRO DERRUBADO":"PINHEIRO  "+hits+"/6",
+                w*.5f,h*.5f-dp(58),14,0xFFFFD998,true);
+            postInvalidateDelayed(90);
+        }
         // Mira sutil no centro da tela.
         ring(c,w/2,h/2,dp(2.5f),0x80FFF4D7,1.2f);
     }
