@@ -51,6 +51,8 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private final java.util.concurrent.atomic.AtomicInteger pendingTreeHits=
         new java.util.concurrent.atomic.AtomicInteger();
     private volatile int pineHitCount=0;
+    private volatile long pineSwingFeedbackUntil=0L;
+    private volatile int pineSwingFeedbackCode=0;
     private volatile long pineHitDisplayUntil=0L;
     private static final float[] SUN_RAY_TINT={1.0f,.79f,.55f};
     private static final float[] MOON_RAY_TINT={.57f,.67f,.96f};
@@ -139,6 +141,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         swordButtonHeld=active;
     }
     boolean swordActive(){return swordGlowRemaining>0f && game.hasSwordEquipped();}
+    int pineSwingFeedback(){return android.os.SystemClock.uptimeMillis()<pineSwingFeedbackUntil?pineSwingFeedbackCode:0;}
     int pineHitFeedback(){
         return android.os.SystemClock.uptimeMillis()<pineHitDisplayUntil?pineHitCount:0;
     }
@@ -240,6 +243,11 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             }
         }
         int swingHits=pendingTreeHits.getAndSet(0);
+        if(swingHits>0){
+            pineSwingFeedbackUntil=android.os.SystemClock.uptimeMillis()+1350L;
+            pineSwingFeedbackCode=pineHarvest==null?1:(activeDecoration==null?2:3);
+            if(game.hud!=null)game.hud.postInvalidate();
+        }
         for(int hitAttempt=0;hitAttempt<Math.min(8,swingHits);hitAttempt++){
             int count=TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),
                 -(float)Math.cos(yaw),swordGlowRemaining>.05f);

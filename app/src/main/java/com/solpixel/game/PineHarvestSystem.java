@@ -12,7 +12,7 @@ final class PineHarvestSystem {
     private final HashMap<Long,TreeState> states=new HashMap<>();
     private final ArrayList<TreeState> falling=new ArrayList<>();
     private final ArrayList<LooseLog> logs=new ArrayList<>();
-    private final TreeModel nearLog,farLog;
+    private TreeModel nearLog,farLog;
     private CampfireSystem campfires;
     private World.Decoration decoration;
     private float[] originalPines;
@@ -52,10 +52,12 @@ final class PineHarvestSystem {
             out[offset+6]=.3f;out[offset+7]=1.5707963f; // cylindrical log lies on its side
         }
     }
-    PineHarvestSystem(Context context) throws Exception {
-        nearLog=new TreeModel(context,"tronco_6_lados.glb");
-        farLog=new TreeModel(context,"tronco_4_lados.glb");
-        nearLog.setNoLeaves();farLog.setNoLeaves();
+    PineHarvestSystem(Context context) {
+        // Nunca desativar a deteccao de golpes se um GLB falhar.
+        try { nearLog=new TreeModel(context,"tronco_6_lados.glb"); nearLog.setNoLeaves(); }
+        catch(Exception error){android.util.Log.e("Solas","Tronco 6 lados indisponivel; golpes permanecem ativos",error);}
+        try { farLog=new TreeModel(context,"tronco_4_lados.glb"); farLog.setNoLeaves(); }
+        catch(Exception error){android.util.Log.e("Solas","Tronco 4 lados indisponivel; golpes permanecem ativos",error);}
         try{campfires=new CampfireSystem(context);}
         catch(Exception error){
             android.util.Log.e("Solas","Fogueira GL nao disponivel (corte continua ativo)",error);
@@ -229,7 +231,7 @@ final class PineHarvestSystem {
         float cz=pz+forward[2]*1.45f+right[2]*.47f-up[2]*.43f;
         float[] instance={cx,cy,cz,.34f,(float)Math.cos(yaw),(float)Math.sin(yaw),.25f,.23f};
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),1f);
-        nearLog.draw(program,instance);
+        if(nearLog!=null)nearLog.draw(program,instance);
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),0f);
     }
 
@@ -267,9 +269,9 @@ final class PineHarvestSystem {
             else if(ds<80f*80f){log.add(far,b);b+=8;}
         }
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),1f);
-        if(a>0)nearLog.draw(program,near);
-        if(b>0)farLog.draw(program,far);
+        if(a>0 && nearLog!=null)nearLog.draw(program,near);
+        if(b>0 && farLog!=null)farLog.draw(program,far);
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uLogMaterial"),0f);
-        if(campfires!=null)campfires.drawLogs(program,nearLog,farLog,eyeX,eyeZ);
+        if(campfires!=null && nearLog!=null && farLog!=null)campfires.drawLogs(program,nearLog,farLog,eyeX,eyeZ);
     }
 }

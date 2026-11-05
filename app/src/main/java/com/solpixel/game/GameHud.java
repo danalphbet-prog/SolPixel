@@ -285,6 +285,13 @@ public final class GameHud extends View {
                 w*.5f,h*.5f-dp(58),14,0xFFFFD998,true);
             postInvalidateDelayed(90);
         }
+        int diagnostic=game.renderer.pineSwingFeedback();
+        if(diagnostic>0 && game.renderer.pineHitFeedback()==0){
+            String msg=diagnostic==1?"CORTE INDISPONIVEL: INICIALIZACAO":
+                diagnostic==2?"AGUARDE AS ARVORES CARREGAREM":"GOLPE REGISTRADO - SEM PINHEIRO NO ALCANCE";
+            text(c,msg,w*.5f,h*.5f-dp(96),11,0xFFFFD998,true);
+            postInvalidateDelayed(120);
+        }
         // Mira sutil no centro da tela.
         ring(c,w/2,h/2,dp(2.5f),0x80FFF4D7,1.2f);
     }
