@@ -14,6 +14,7 @@ final class SkyAtmosphere {
         in vec2 vUv;
         uniform vec3 uForward,uRight,uUp,uSun,uMoonDir;
         uniform float uAspect,uFov,uEclipse,uNight,uSkyTime,uDitherStrength;
+        uniform float uSkyGrain;
         uniform sampler2D uStarMap,uMoonTex;
         out vec4 outColor;
         const float PI=3.141592653589793;
@@ -159,6 +160,11 @@ final class SkyAtmosphere {
                 opacity=mix(opacity,1.0,uEclipse);
                 sky=mix(sky,moonColor,clamp(moon.a*opacity,0.0,1.0));
             }
+            // Ruido espacial muito leve, ~10% do grain antigo, apenas no ceu.
+            // Baixa frequencia temporal para evitar flicker e consumo adicional de CPU.
+            float grain=fract(sin(dot(floor(gl_FragCoord.xy*.65),
+                vec2(12.9898,78.233))+floor(uSkyTime*4.0)*.47)*43758.5453)-.5;
+            sky+=vec3(grain*.012*uSkyGrain);
             outColor=vec4(max(sky,vec3(0.0)),1.0);
         }
         """;

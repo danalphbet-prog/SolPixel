@@ -56,8 +56,9 @@ final class TreeLodRenderer {
             float limit=Math.min(MAX_DIST,game.viewDistance); // todas as especies ate 4 km
             if(ds>limit*limit)continue;
             float distance=(float)Math.sqrt(ds);
-            if(distance>45f && dx*fx+dz*fz < -distance*.18f)continue;
-            builders[kind][level(distance)].add(source,offset);
+            boolean behind=(dx*fx+dz*fz)<-distance*.12f;
+            int lod=behind?5:level(distance); // LOD95 = indice 5
+            builders[kind][lod].add(source,offset);
         }
     }
     void draw(int program,float[] normal,float[] giant,float[] farN,float[] farG,

@@ -198,9 +198,9 @@ public final class GameHud extends View {
                 drawSlider(c,w*.28f,w*.72f,h*.64f,(game.terrainDetailRadius-40f)/260f);
                 text(c,"Terreno próximo: "+game.renderDistance+" m",w*.5f,h*.701f,11,0xFFEAF0F3,false);
                 drawCheck(c,w*.30f,h*.819f,game.softPixelOn);
-                text(c,"Pixelização sutil (1,35 px)",w*.555f,h*.832f,11,0xFFBBCBD4,false);
+                text(c,"Pixelização PS1 sutil (1,65 px)",w*.555f,h*.832f,11,0xFFBBCBD4,false);
                 drawCheck(c,w*.30f,h*.765f,game.filmGrainOn);
-                text(c,"Film grain na tela inteira",w*.555f,h*.778f,11,0xFFBBCBD4,false);
+                text(c,"Grão leve somente no céu",w*.555f,h*.778f,11,0xFFBBCBD4,false);
             }
             rounded(c,w*.435f,h*.873f,w*.565f,h*.943f,8,0xFFF2BD7D);
             text(c,"VOLTAR",w*.5f,h*.924f,12,0xFF193344,true);

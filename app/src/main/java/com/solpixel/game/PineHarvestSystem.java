@@ -101,24 +101,34 @@ final class PineHarvestSystem {
     }
     int hit(float px,float pz,float fx,float fz,boolean glowing){
         if(campfires!=null && campfires.attack(px,pz,fx,fz,glowing))return 0;
-        if(decoration==null || decoration.trees==null)return 0;
+        if(decoration==null || originalPines==null)return 0;
         float norm=(float)Math.hypot(fx,fz);
         if(norm<.1f)return 0;fx/=norm;fz/=norm;
         World.Tree target=null;
         float best=Float.POSITIVE_INFINITY;
-        for(World.Tree candidate:decoration.trees){
-            if(candidate.kind!=World.PINE || isFelled(candidate.x,candidate.z))continue;
-            float dx=candidate.x-px,dz=candidate.z-pz;
+        // Mesma lista de instancias usada para desenhar os pinheiros: sem divergencia
+        // entre alvo de combate e arvore visivel. Nunca corta a especie de folha larga.
+        for(int i=0;i+7<originalPines.length;i+=8){
+            float tx=originalPines[i],tz=originalPines[i+2];
+            if(isFelled(tx,tz))continue;
+            float dx=tx-px,dz=tz-pz;
             float distance=(float)Math.hypot(dx,dz);
-            if(distance>10.5f || distance<.10f)continue;
+            if(distance>11.5f)continue;
+            float scale=originalPines[i+3];
+            float radius=Math.max(.5f,1.78f*scale);
             float ahead=dx*fx+dz*fz;
-            if(ahead<-Math.min(1.0f,candidate.radius*.55f) || ahead>10.5f)continue;
+            // Troncos grandes podem ter o centro atras do jogador quando encostado.
+            if(ahead < -radius*.80f || ahead>11.5f)continue;
             float lateral=Math.abs(dx*fz-dz*fx);
-            // Arco frontal mais tolerante: mira central OU tronco a frente.
-            float width=Math.max(1.65f,Math.min(3.7f,1.2f+distance*.33f+candidate.radius*.48f));
+            float width=Math.max(1.4f,Math.min(3.8f,radius+.55f+distance*.15f));
             if(lateral>width)continue;
-            float score=lateral*.70f+distance*.23f;
-            if(score<best){best=score;target=candidate;}
+            float score=lateral*.80f+Math.max(0f,distance-radius)*.16f;
+            if(score<best){
+                best=score;
+                float rotation=(float)Math.atan2(originalPines[i+5],originalPines[i+4]);
+                target=new World.Tree(World.PINE,tx,originalPines[i+1],tz,
+                    scale,rotation,originalPines[i+6],radius);
+            }
         }
         if(target==null)return 0;
         long id=key(target.x,target.z);

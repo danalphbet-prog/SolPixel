@@ -592,11 +592,11 @@ final class Shaders {
         void main(){
             vec3 color=texture(uScene,vUv).rgb;
             if(uSoftPixels>.5){
-                // Grid suavissimo: celulas de 1,35 pixels na resolucao interna.
-                vec2 block=uTexel*1.35;
+                // Grid PS1 sutil, sem exagerar o efeito na tela.
+                vec2 block=uTexel*1.65;
                 vec2 uvPix=(floor(vUv/block)+.5)*block;
                 vec3 pixelated=texture(uScene,clamp(uvPix,uTexel*.5,vec2(1.0)-uTexel*.5)).rgb;
-                color=mix(color,pixelated,.28);
+                color=mix(color,pixelated,.36);
             }
             float d=texture(uDepth,vUv).r;
             float dist=linearDepth(d);
@@ -607,8 +607,8 @@ final class Shaders {
                 vec3 sum=vec3(0.0);
                 const vec2 kernel[8]=vec2[8](vec2(1,0),vec2(-1,0),vec2(0,1),vec2(0,-1),
                   vec2(.707,.707),vec2(-.707,.707),vec2(.707,-.707),vec2(-.707,-.707));
-                for(int i=0;i<8;i++)sum+=texture(uScene,vUv+kernel[i]*uTexel*(1.0+blur*4.5)).rgb;
-                color=mix(color,sum*.125,blur*.63);
+                for(int i=0;i<4;i++)sum+=texture(uScene,vUv+kernel[i]*uTexel*(1.0+blur*4.5)).rgb;
+                color=mix(color,sum*.25,blur*.63);
             }
             color+=texture(uBloom,vUv).rgb*.95;
             if(uSunVisible>.001){
@@ -627,11 +627,11 @@ final class Shaders {
                 float spikes=pow(max(0.0,cos(angle*10.0)),32.0)*exp(-radius*4.4)*.19;
                 float shaftSamples=0.0;
                 if(uRayQuality>.5){
-                    for(int i=1;i<=12;i++){
-                        float t=float(i)/13.0;
+                    for(int i=1;i<=6;i++){
+                        float t=float(i)/7.0;
                         vec2 sampleUv=vUv+toSun*t;
                         float clear=skyOpen(sampleUv);
-                        shaftSamples+=clear*(.38+.62*t)/12.0;
+                        shaftSamples+=clear*(.38+.62*t)/6.0;
                     }
                 }
                 float irregular=.75+.25*pow(max(0.0,cos(angle*13.0+.5)),4.0);
@@ -652,8 +652,8 @@ final class Shaders {
                     float fan=sin(3.14159265*progress);
                     float spread=.026*clamp(axisLength/.42,.65,1.30);
                     if(along>0.0 && along<1.03 && abs(lateral)<.19){
-                    for(int k=0;k<9;k++){
-                        float strand=float(k-4);
+                    for(int k=0;k<5;k++){
+                        float strand=float(k-2)*2.0;
                         float deviation=strand*spread*fan;
                         float width=mix(.012,.0035,progress)*(1.0+.055*abs(strand));
                         float line=exp(-pow((lateral-deviation)/width,2.0));

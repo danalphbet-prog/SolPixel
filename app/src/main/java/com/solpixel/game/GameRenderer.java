@@ -76,6 +76,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     private final float[] moonDir=new float[3];
     private final float[] lowCloudDiscs=new float[16];
     private int lowCloudUpdate=0;
+    private int shadowFrame=0;
     private GrassModel grasses;
     private int grassP,terrainDirt,terrainMiddle,terrainGrass;
     private boolean hasTerrainTextures=false;
@@ -214,7 +215,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     @Override public void onSurfaceChanged(GL10 unused,int width,int height){
         screenW=Math.max(1,width);screenH=Math.max(1,height);
         // 1280px de largura maxima para garantir FPS em aparelhos intermediarios.
-        float scale=Math.min(1f,960f/Math.max(screenW,screenH));
+        float scale=Math.min(1f,840f/Math.max(screenW,screenH));
         sceneW=Math.max(16,Math.round(screenW*scale));
         sceneH=Math.max(16,Math.round(screenH*scale));
         scene=Target.make(sceneW,sceneH,true);
@@ -227,6 +228,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
     @Override public void onDrawFrame(GL10 unused){
         if(scene==null)return;
         long now=System.nanoTime();
+        // Soft 40fps limit: reduces heat on high-refresh-rate devices.
+        long elapsed=now-lastFrame;
+        if(elapsed<25_000_000L){
+            long waitNs=25_000_000L-elapsed;
+            if(waitNs>1_500_000L)try{Thread.sleep((waitNs-700_000L)/1_000_000L);}catch(InterruptedException ignored){}
+            now=System.nanoTime();
+        }
         float dt=Math.min(.040f,Math.max(.001f,(now-lastFrame)*1e-9f));lastFrame=now;
         update(dt);
         if(pineHarvest!=null){
@@ -365,7 +373,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         if((++swordShadowFrame & 3)==0 && swordGlow>.025f)updateSwordShadowOccluders();
         Matrix.setLookAtM(view,0,x,eyeY,z,x+forward[0],eyeY+forward[1],z+forward[2],0,1,0);
         Matrix.multiplyMM(vp,0,proj,0,view,0);
-        if(forestShadows!=null && activeDecoration!=null){
+        if(forestShadows!=null && activeDecoration!=null && (shadowFrame++%2==0)){
             try {forestShadows.update(x,surfaceY,z,SUN,activeDecoration,broadleaf,pines,
                         treeLods,farWorld,game.forestShadowDistance,game.forestShadowOn && SUN[1]>.08f);}
             catch(Exception e){Log.w("SolPixel","Desativando sombras nesta GPU",e);forestShadows=null;}
@@ -497,6 +505,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
         f1(skyP,"uAspect",sceneW/(float)sceneH);
         f1(skyP,"uFov",(float)Math.tan(Math.toRadians(67)/2));
         f1(skyP,"uSkyTime",celestialTime);
+        f1(skyP,"uSkyGrain",game.filmGrainOn?1f:0f);
         texture(4,starTexture);i1(skyP,"uStarMap",4);
         texture(5,moonTexture);i1(skyP,"uMoonTex",5);
         fullTriangle();
@@ -614,7 +623,7 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             applySwordLight(grassP);
             if(pineHarvest!=null)pineHarvest.bindFireLights(grassP);
             grasses.draw(grassP,activeDecoration.grassInstances,grassTint,68f,
-                         time,x,z,moveVelocityX,moveVelocityZ);
+                         time,x,z,moveVelocityX,moveVelocityZ,forward[0],forward[2]);
         }
         // Particulas pontuais e cintilantes, so durante o eclipse e na floresta local.
         if(fireflies!=null && activeDecoration!=null && (localForest>.29f || localWheat>.22f) && darkness>.56f){

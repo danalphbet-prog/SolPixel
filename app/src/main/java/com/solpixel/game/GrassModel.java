@@ -21,6 +21,7 @@ final class GrassModel {
     private final int vao, vbo, ibo, crossBuffer, flowerBuffer, atlas;
     private float[] uploaded;
     private float selectionX=Float.MAX_VALUE,selectionZ=Float.MAX_VALUE;
+    private float selectionFx=999f,selectionFz=999f;
     private int crossCount, flowerCount;
 
     GrassModel(Context context) throws Exception {
@@ -79,23 +80,30 @@ final class GrassModel {
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER,data.length*4,f,GLES30.GL_STATIC_DRAW);
     }
 
-    private void prepare(float[] source,float px,float pz,float limit){
+    private static boolean visible(float[] source,int i,float px,float pz,
+                                   float fx,float fz,float limit2){
+        float dx=source[i]-px,dz=source[i+2]-pz;
+        float ds=dx*dx+dz*dz;
+        if(ds>limit2)return false;
+        if(ds<9f*9f)return true; // avoid popping immediately around the player
+        return dx*fx+dz*fz >= -(float)Math.sqrt(ds)*.16f;
+    }
+    private void prepare(float[] source,float px,float pz,float fx,float fz,float limit){
         // Apenas plantas ate (limite+8)m participam do desenho e do vento.
         if(uploaded==source && Math.abs(px-selectionX)<3.5f &&
-           Math.abs(pz-selectionZ)<3.5f)return;
+           Math.abs(pz-selectionZ)<3.5f &&
+           fx*selectionFx+fz*selectionFz>.985f)return;
         float limit2=(limit+8f)*(limit+8f);
         int crosses=0,flowers=0;
         for(int i=0;i<source.length;i+=8){
-            float dx=source[i]-px,dz=source[i+2]-pz;
-            if(dx*dx+dz*dz>limit2)continue;
+            if(!visible(source,i,px,pz,fx,fz,limit2))continue;
             int type=Math.round(source[i+6]);
             if(type>=3&&type<=5)flowers++;else crosses++;
         }
         float[] cross=new float[crosses*8],flower=new float[flowers*8];
         int a=0,b=0;
         for(int i=0;i<source.length;i+=8){
-            float dx=source[i]-px,dz=source[i+2]-pz;
-            if(dx*dx+dz*dz>limit2)continue;
+            if(!visible(source,i,px,pz,fx,fz,limit2))continue;
             int type=Math.round(source[i+6]);
             if(type>=3&&type<=5){System.arraycopy(source,i,flower,b,8);b+=8;}
             else {System.arraycopy(source,i,cross,a,8);a+=8;}
@@ -103,6 +111,7 @@ final class GrassModel {
         upload(crossBuffer,cross);upload(flowerBuffer,flower);
         crossCount=crosses;flowerCount=flowers;
         uploaded=source;selectionX=px;selectionZ=pz;
+        selectionFx=fx;selectionFz=fz;
     }
 
     private static void instanceBuffer(int buffer){
@@ -113,9 +122,11 @@ final class GrassModel {
     }
 
     void draw(int program,float[] instances,float[] tint,float limit,
-              float time,float px,float pz,float vx,float vz){
+              float time,float px,float pz,float vx,float vz,float fx,float fz){
         if(instances==null||instances.length==0)return;
-        prepare(instances,px,pz,limit);
+        float norm=(float)Math.hypot(fx,fz);
+        if(norm>.001f){fx/=norm;fz/=norm;}else{fx=0f;fz=-1f;}
+        prepare(instances,px,pz,fx,fz,limit);
         GLES30.glUniform1f(GLES30.glGetUniformLocation(program,"uWindTime"),time);
         GLES30.glUniform2f(GLES30.glGetUniformLocation(program,"uPlayerXZ"),px,pz);
         GLES30.glUniform2f(GLES30.glGetUniformLocation(program,"uPlayerVelocity"),vx,vz);

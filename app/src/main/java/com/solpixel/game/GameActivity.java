@@ -55,7 +55,7 @@ public final class GameActivity extends Activity { // SOLAS_CAMPFIRE_V059
         preferences=getSharedPreferences("SolPixelSettings",MODE_PRIVATE);
         inventory.restore(preferences.getString("solasInventory12", ""));
         softPixelOn=preferences.getBoolean("softPixelOn",true);
-        filmGrainOn=preferences.getBoolean("filmGrainOn",true);
+        filmGrainOn=preferences.getBoolean("filmGrainOn",true); // agora apenas no ceu
         musicOn=preferences.getBoolean("music",true);
         musicVolume=preferences.getFloat("volume",.55f);
         cloudsOn=preferences.getBoolean("clouds",true);
@@ -116,8 +116,7 @@ public final class GameActivity extends Activity { // SOLAS_CAMPFIRE_V059
         FrameLayout root = new FrameLayout(this);
         root.addView(surface, new FrameLayout.LayoutParams(-1,-1));
         root.addView(hud, new FrameLayout.LayoutParams(-1,-1));
-        filmOverlay=new FilmGrainOverlay(this);
-        root.addView(filmOverlay,new FrameLayout.LayoutParams(-1,-1));
+        // Film grain de tela inteira removido: ruido sutil diretamente no shader do ceu.
         setContentView(root);
     }
     void immersive() {
