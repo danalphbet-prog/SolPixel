@@ -99,45 +99,61 @@ final class PineHarvestSystem {
             if(time-it.next().felledAt>2.2f)it.remove();
         }
     }
-    int hit(float px,float pz,float fx,float fz,boolean glowing){
+    /** Sword targeting: the crosshair is a 3D camera ray, never a flat XZ cone. */
+    int hit(float px,float eyeY,float pz,float fx,float fy,float fz,boolean glowing){
         if(campfires!=null && campfires.attack(px,pz,fx,fz,glowing))return 0;
         if(decoration==null || originalPines==null)return 0;
-        float norm=(float)Math.hypot(fx,fz);
-        if(norm<.1f)return 0;fx/=norm;fz/=norm;
-        World.Tree target=null;
-        float best=Float.POSITIVE_INFINITY;
-        // Mesma lista de instancias usada para desenhar os pinheiros: sem divergencia
-        // entre alvo de combate e arvore visivel. Nunca corta a especie de folha larga.
+        float length=(float)Math.sqrt(fx*fx+fy*fy+fz*fz);
+        if(length<.001f)return 0;
+        fx/=length;fy/=length;fz/=length;
+        float bestRay=Float.POSITIVE_INFINITY;
+        float bestAssist=Float.POSITIVE_INFINITY;
+        int bestRayIndex=-1,bestAssistIndex=-1;
+        // Use the SAME pine instance transforms the renderer uses.
         for(int i=0;i+7<originalPines.length;i+=8){
             float tx=originalPines[i],tz=originalPines[i+2];
             if(isFelled(tx,tz))continue;
+            float sx=originalPines[i+3];
+            float radius=Math.max(.52f,1.78f*sx);
             float dx=tx-px,dz=tz-pz;
-            float distance=(float)Math.hypot(dx,dz);
-            if(distance>11.5f)continue;
-            float scale=originalPines[i+3];
-            float radius=Math.max(.5f,1.78f*scale);
-            float ahead=dx*fx+dz*fz;
-            // Troncos grandes podem ter o centro atras do jogador quando encostado.
-            if(ahead < -radius*.80f || ahead>11.5f)continue;
-            float lateral=Math.abs(dx*fz-dz*fx);
-            float width=Math.max(1.4f,Math.min(3.8f,radius+.55f+distance*.15f));
-            if(lateral>width)continue;
-            float score=lateral*.80f+Math.max(0f,distance-radius)*.16f;
-            if(score<best){
-                best=score;
-                float rotation=(float)Math.atan2(originalPines[i+5],originalPines[i+4]);
-                target=new World.Tree(World.PINE,tx,originalPines[i+1],tz,
-                    scale,rotation,originalPines[i+6],radius);
+            float horizontal=(float)Math.hypot(dx,dz);
+            if(horizontal>12.0f+radius)continue;
+            // Actual trunk vertical span: pine geometry extends above its ground origin.
+            float bottom=World.height(tx,tz)-.8f;
+            float top=bottom+Math.max(5.0f,43f*sx);
+            // Closest point on camera ray to trunk axis, including when player is touching it.
+            float projection=dx*fx+dz*fz;
+            float flat=fx*fx+fz*fz;
+            float t=flat>.0001f?Math.max(0f,projection/flat):0f;
+            if(t>12.5f)continue;
+            float rayX=px+fx*t,rayZ=pz+fz*t,rayY=eyeY+fy*t;
+            float lateral=(float)Math.hypot(tx-rayX,tz-rayZ);
+            if(rayY>=bottom-1.1f && rayY<=top+1.0f && lateral<=radius+.45f){
+                float score=t+Math.max(0f,lateral-radius)*.15f;
+                if(score<bestRay){bestRay=score;bestRayIndex=i;}
+                continue;
+            }
+            // Sword swing assistance only for trunks very close in front of player.
+            float front=dx*fx+dz*fz;
+            if(horizontal<=3.8f+radius && front>=-radius*.7f &&
+               lateral<=radius+1.25f && rayY>=bottom-2f && rayY<=top+2f){
+                float score=horizontal+Math.max(0f,lateral-radius)*2f;
+                if(score<bestAssist){bestAssist=score;bestAssistIndex=i;}
             }
         }
-        if(target==null)return 0;
-        long id=key(target.x,target.z);
+        int index=bestRayIndex>=0?bestRayIndex:bestAssistIndex;
+        if(index<0)return 0;
+        float tx=originalPines[index],tz=originalPines[index+2];
+        float scale=originalPines[index+3];
+        float rotation=(float)Math.atan2(originalPines[index+5],originalPines[index+4]);
+        float radius=Math.max(.52f,1.78f*scale);
+        World.Tree target=new World.Tree(World.PINE,tx,originalPines[index+1],tz,
+            scale,rotation,originalPines[index+6],radius);
+        long id=key(tx,tz);
         TreeState s=states.get(id);
         if(s==null){
-            float tilt=0;
-            if(originalPines!=null)for(int i=0;i+7<originalPines.length;i+=8)
-                if(key(originalPines[i],originalPines[i+2])==id){tilt=originalPines[i+7];break;}
-            s=new TreeState(target,tilt);states.put(id,s);
+            s=new TreeState(target,originalPines[index+7]);
+            states.put(id,s);
         }
         s.damage++;s.hitTime=gameTime;lastHit=s;
         if(s.damage>=6){

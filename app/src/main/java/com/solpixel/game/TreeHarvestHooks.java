@@ -5,9 +5,9 @@ final class TreeHarvestHooks {
     private static volatile PineHarvestSystem system;
     private TreeHarvestHooks(){}
     static void register(PineHarvestSystem current){system=current;}
-    static int swordSwing(float x,float z,float dx,float dz,boolean glowing){
+    static int swordSwing(float x,float eyeY,float z,float dx,float dy,float dz,boolean glowing){
         PineHarvestSystem h=system;
-        return h==null?0:h.hit(x,z,dx,dz,glowing);
+        return h==null?0:h.hit(x,eyeY,z,dx,dy,dz,glowing);
     }
     static boolean isFelled(float x,float z){
         PineHarvestSystem h=system;

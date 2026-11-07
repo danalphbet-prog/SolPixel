@@ -257,8 +257,13 @@ final class GameRenderer implements GLSurfaceView.Renderer {
             if(game.hud!=null)game.hud.postInvalidate();
         }
         for(int hitAttempt=0;hitAttempt<Math.min(8,swingHits);hitAttempt++){
-            int count=TreeHarvestHooks.swordSwing(x,z,(float)Math.sin(yaw),
-                -(float)Math.cos(yaw),swordGlowRemaining>.05f);
+            // Ray origin and direction correspond exactly to the central HUD reticle.
+            float cp=(float)Math.cos(pitch);
+            float cameraY=Math.max(Float.isNaN(smoothedEyeY)?World.height(x,z)+1.72f:smoothedEyeY,
+                World.height(x,z)+1.54f);
+            int count=TreeHarvestHooks.swordSwing(x,cameraY,z,
+                (float)Math.sin(yaw)*cp,(float)Math.sin(pitch),
+                -(float)Math.cos(yaw)*cp,swordGlowRemaining>.05f);
             if(count>0){
                 pineHitCount=count;
                 pineHitDisplayUntil=android.os.SystemClock.uptimeMillis()+1150L;
